@@ -1,0 +1,14 @@
+{
+  "name": "painel-atribuicoes",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "cd apps/api && bun run dev",
+    "dev:web": "cd apps/web && bun run dev",
+    "build": "cd apps/web && bun run build",
+    "typecheck": "cd apps/api && bun run typecheck && cd ../web && bun run typecheck",
+    "db:generate": "cd apps/api && bun run db:generate",
+    "db:migrate": "cd apps/api && bun run db:migrate",
+    "db:seed": "cd apps/api && bun run db:seed"
+  }
+}

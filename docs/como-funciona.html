@@ -1,0 +1,322 @@
+<title>Painel de Atribuições Asia</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: uma faixa-hero com o fluxo de 5 etapas; abaixo, blocos visuais curtos em grade */
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --ink: #141a2e;
+  --muted: #5b6480;
+  --line: #dfe3ee;
+  --accent: #4338ca;
+  --accent-soft: #e8e7fb;
+  --fiat: #2563eb;
+  --multi: #c26a05;
+  --leap: #047857;
+  --warn: #b45309;
+  --warn-soft: #fdf1df;
+  --ok: #047857;
+  --ok-soft: #e1f4ec;
+  --code-bg: #f0f2f8;
+  --display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1220; --surface: #171c2e; --ink: #e9ecf6; --muted: #9aa3bf; --line: #2a3150;
+    --accent: #a5a1ff; --accent-soft: #262a52; --fiat: #6c9bff; --multi: #f0a443; --leap: #34d399;
+    --warn: #f0a443; --warn-soft: #3a2a12; --ok: #34d399; --ok-soft: #0f3326; --code-bg: #10142a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1220; --surface: #171c2e; --ink: #e9ecf6; --muted: #9aa3bf; --line: #2a3150;
+  --accent: #a5a1ff; --accent-soft: #262a52; --fiat: #6c9bff; --multi: #f0a443; --leap: #34d399;
+  --warn: #f0a443; --warn-soft: #3a2a12; --ok: #34d399; --ok-soft: #0f3326; --code-bg: #10142a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 56px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h1 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); font-weight: 700; }
+h2 { font-size: 1.15rem; font-weight: 600; }
+h3 { font-size: 0.98rem; font-weight: 600; }
+p { margin: 0; }
+.eyebrow { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 600; }
+.muted { color: var(--muted); }
+header { display: grid; gap: 8px; }
+header p { max-width: 62ch; color: var(--muted); font-size: 1.02rem; }
+
+/* ---------- Fluxo principal ---------- */
+.fluxo-box { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 26px 22px; overflow-x: auto; }
+.fluxo { display: flex; align-items: stretch; gap: 0; min-width: 0; }
+.etapa { flex: 1 1 0; min-width: 0; display: grid; align-content: start; gap: 10px; padding: 4px 6px; }
+.etapa .num {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-family: var(--display); font-weight: 700; font-size: 0.95rem;
+}
+.etapa .icone { width: 46px; height: 46px; color: var(--accent); }
+.etapa p { font-size: 0.88rem; color: var(--muted); }
+.etapa.destaque .num { background: var(--accent); color: var(--surface); }
+.seta { flex: 0 0 34px; display: grid; place-items: center; color: var(--line); }
+.seta svg { width: 30px; height: 30px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.76rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.tag { background: var(--accent-soft); color: var(--accent); }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+code, .mono { font-family: var(--mono); font-size: 0.8rem; }
+.json {
+  background: var(--code-bg); border-radius: 10px; padding: 10px 12px; font-family: var(--mono); font-size: 0.74rem;
+  line-height: 1.55; color: var(--ink); white-space: pre; overflow-x: auto; margin: 0;
+}
+.json .k { color: var(--accent); }
+
+@media (max-width: 900px) {
+  .fluxo { flex-direction: column; }
+  .seta { flex-basis: 30px; }
+  .seta svg { transform: rotate(90deg); }
+  .etapa { grid-template-columns: 46px 1fr; column-gap: 14px; }
+  .etapa > :not(.num):not(.icone) { grid-column: 2; }
+  .etapa .icone { display: none; }
+}
+
+/* ---------- Blocos ---------- */
+.grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 820px) { .grade { grid-template-columns: 1fr; } }
+.bloco { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.bloco > header { gap: 4px; }
+
+/* Antes x depois */
+.antes-depois { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: center; }
+@media (max-width: 480px) { .antes-depois { grid-template-columns: 1fr; } .antes-depois .seta svg { transform: rotate(90deg); } }
+.caixa-email { display: grid; gap: 6px; }
+.email { font-size: 0.74rem; padding: 7px 9px; border-radius: 7px; background: var(--code-bg); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-painel { display: grid; gap: 8px; }
+.barra { display: grid; grid-template-columns: 74px 1fr 26px; align-items: center; gap: 8px; font-size: 0.76rem; }
+.barra .trilho { height: 10px; border-radius: 5px; background: var(--code-bg); overflow: hidden; }
+.barra .valor { height: 100%; border-radius: 5px; background: var(--accent); }
+.barra .n { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+.exemplo { font-size: 0.7rem; color: var(--muted); font-style: italic; }
+
+/* Empresas */
+.empresas { display: grid; gap: 12px; }
+.gerente { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 0.9rem; }
+.gerente svg { width: 22px; height: 22px; flex: none; }
+.empresas-linha { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 480px) { .empresas-linha { grid-template-columns: 1fr; } }
+.empresa { border: 1px solid var(--line); border-top: 4px solid var(--cor); border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+.empresa strong { font-family: var(--display); font-size: 0.9rem; color: var(--cor); }
+.empresa ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 0.8rem; color: var(--muted); }
+.empresa .token { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+
+/* Linha do tempo */
+.timeline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px; }
+.vend { display: grid; justify-items: center; gap: 4px; min-width: 62px; }
+.vend .bola { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-weight: 700; background: var(--code-bg); color: var(--muted); border: 2px solid var(--line); }
+.vend small { font-size: 0.7rem; color: var(--muted); }
+.vend.final .bola { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.vend.final small { color: var(--ok); font-weight: 600; }
+.timeline .liga { width: 22px; height: 2px; background: var(--line); margin-bottom: 18px; }
+
+/* Classificação */
+.classif { display: grid; grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }
+@media (max-width: 560px) { .classif { grid-template-columns: 1fr; } .classif .seta svg { transform: rotate(90deg); } }
+.resumo { font-size: 0.82rem; background: var(--code-bg); border-radius: 10px; padding: 12px; color: var(--ink); }
+.resumo mark { background: var(--warn-soft); color: var(--ink); padding: 0 2px; border-radius: 3px; }
+.resultado { display: grid; gap: 8px; font-size: 0.8rem; }
+.resultado .linha { display: grid; gap: 4px; }
+.resultado .rot { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+/* Acessos */
+.acessos { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; }
+@media (max-width: 480px) { .acessos { grid-template-columns: 1fr; } .acessos .seta svg { transform: rotate(90deg); } }
+.papel { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 6px; }
+.papel strong { font-family: var(--display); }
+.papel ul { margin: 0; padding-left: 18px; font-size: 0.82rem; color: var(--muted); display: grid; gap: 2px; }
+
+footer { font-size: 0.8rem; color: var(--muted); text-align: center; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Mundo dos Bots · Grupo Asia</span>
+    <h1>Painel de Atribuições</h1>
+    <p>Cada conversa que o chatbot passa para um vendedor deixa de ser um e-mail solto e vira dado organizado: quem atendeu, de onde o cliente veio e em qual empresa.</p>
+  </header>
+
+  <!-- ===== Fluxo principal ===== -->
+  <section class="fluxo-box" aria-label="Fluxo do sistema">
+    <div class="fluxo">
+      <div class="etapa">
+        <span class="num">1</span>
+        <svg class="icone" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10h32v22H20l-8 7v-7H8z"/><path d="M15 19h18M15 25h11"/></svg>
+        <h3>Cliente conversa com o chatbot</h3>
+        <p>Atendimento automático no WhatsApp, como já acontece hoje.</p>
+      </div>
+      <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+
+      <div class="etapa">
+        <span class="num">2</span>
+        <svg class="icone" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="16" cy="16" r="6"/><path d="M6 36c1-6 5-10 10-10s9 4 10 10"/><path d="M30 22h12M37 17l5 5-5 5"/></svg>
+        <h3>Bot atribui a um vendedor</h3>
+        <p>E envia um aviso automático para o painel, com uma senha (token) por empresa.</p>
+        <pre class="json"><span class="k">cliente</span>   João Silva
+<span class="k">telefone</span>  11 99999-0000
+<span class="k">vendedor</span>  Carlos
+<span class="k">resumo</span>    "Viu anúncio no Insta..."</pre>
+      </div>
+      <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+
+      <div class="etapa">
+        <span class="num">3</span>
+        <svg class="icone" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="24" cy="11" rx="14" ry="5"/><path d="M10 11v26c0 3 6 5 14 5s14-2 14-5V11"/><path d="M10 24c0 3 6 5 14 5s14-2 14-5"/></svg>
+        <h3>Painel recebe e guarda</h3>
+        <p>Tudo fica salvo no banco. Se o cliente for repassado, o painel registra a troca.</p>
+      </div>
+      <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+
+      <div class="etapa destaque">
+        <span class="num">4</span>
+        <svg class="icone" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="10" y="14" width="28" height="22" rx="6"/><path d="M24 8v6M18 24h.01M30 24h.01M19 30h10"/><path d="M6 22v6M42 22v6"/></svg>
+        <h3>IA lê o resumo e classifica</h3>
+        <p>Escolhe a origem do cliente e as etiquetas, entre as opções que a gerência cadastrou.</p>
+        <div class="pills">
+          <span class="pill ok">Com certeza → classificado</span>
+          <span class="pill warn">Na dúvida → "A revisar"</span>
+        </div>
+      </div>
+      <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+
+      <div class="etapa">
+        <span class="num">5</span>
+        <svg class="icone" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="8" width="36" height="28" rx="4"/><path d="M14 30V22M22 30V16M30 30v-6M16 42h16"/></svg>
+        <h3>Gerente acompanha pelo navegador</h3>
+        <p>Gráficos por vendedor, origem, empresa e período. Sem instalar nada.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="grade">
+    <!-- ===== Antes x depois ===== -->
+    <section class="bloco">
+      <header>
+        <span class="eyebrow">O problema</span>
+        <h2>Do e-mail bagunçado ao painel</h2>
+      </header>
+      <div class="antes-depois">
+        <div class="caixa-email" aria-label="Antes: caixa de e-mail">
+          <div class="email">Usuário Ana foi atribuído para Carlos</div>
+          <div class="email">Usuário Pedro foi atribuído para Bia</div>
+          <div class="email">Usuário Lucas foi atribuído para Carlos</div>
+          <div class="email">Usuário Rita foi atribuído para Davi</div>
+          <div class="email">Usuário Caio foi atribuído para Bia</div>
+          <span class="exemplo">Antes: centenas de e-mails iguais</span>
+        </div>
+        <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+        <div class="mini-painel" aria-label="Depois: painel">
+          <div class="barra"><span>Carlos</span><span class="trilho"><span class="valor" style="display:block;width:92%"></span></span><span class="n">46</span></div>
+          <div class="barra"><span>Bia</span><span class="trilho"><span class="valor" style="display:block;width:70%"></span></span><span class="n">35</span></div>
+          <div class="barra"><span>Davi</span><span class="trilho"><span class="valor" style="display:block;width:48%"></span></span><span class="n">24</span></div>
+          <div class="barra"><span>Fernanda</span><span class="trilho"><span class="valor" style="display:block;width:30%"></span></span><span class="n">15</span></div>
+          <span class="exemplo">Depois: atendimentos por vendedor (números ilustrativos)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Empresas ===== -->
+    <section class="bloco">
+      <header>
+        <span class="eyebrow">Organização</span>
+        <h2>Três empresas, uma visão</h2>
+      </header>
+      <div class="empresas">
+        <div class="gerente">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>
+          A gerência vê as três juntas ou filtra uma
+        </div>
+        <div class="empresas-linha">
+          <div class="empresa" style="--cor: var(--fiat)">
+            <strong>Asia Fiat</strong>
+            <ul><li>Vendedores próprios</li><li>Origens próprias</li></ul>
+            <span class="token">token exclusivo</span>
+          </div>
+          <div class="empresa" style="--cor: var(--multi)">
+            <strong>Asia Multimarcas</strong>
+            <ul><li>Vendedores próprios</li><li>Origens próprias</li></ul>
+            <span class="token">token exclusivo</span>
+          </div>
+          <div class="empresa" style="--cor: var(--leap)">
+            <strong>Asia Leap Motors</strong>
+            <ul><li>Vendedores próprios</li><li>Origens próprias</li></ul>
+            <span class="token">token exclusivo</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Classificação ===== -->
+    <section class="bloco">
+      <header>
+        <span class="eyebrow">Inteligência artificial</span>
+        <h2>Como a IA classifica um atendimento</h2>
+      </header>
+      <div class="classif">
+        <div class="resumo">"Cliente disse que <mark>viu o anúncio no Instagram</mark>, quer <mark>trocar o carro dele</mark> num Pulse e perguntou sobre <mark>parcelas</mark>."</div>
+        <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+        <div class="resultado">
+          <div class="linha"><span class="rot">Origem</span><span><span class="pill tag">Anúncio Meta</span></span></div>
+          <div class="linha"><span class="rot">Etiquetas</span><div class="pills"><span class="pill tag">Troca / avaliação</span><span class="pill tag">Financiamento</span></div></div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:.85rem">A gerência cria novas opções quando quiser, por exemplo "Campanha Leap Motors", e a IA passa a usá-las.</p>
+    </section>
+
+    <!-- ===== Reatribuição ===== -->
+    <section class="bloco">
+      <header>
+        <span class="eyebrow">Regra de contagem</span>
+        <h2>Cliente repassado entre vendedores</h2>
+      </header>
+      <div class="timeline" aria-label="Linha do tempo: A, B, C e D; conta para D">
+        <div class="vend"><span class="bola">A</span><small>1º</small></div><span class="liga"></span>
+        <div class="vend"><span class="bola">B</span><small>2º</small></div><span class="liga"></span>
+        <div class="vend"><span class="bola">C</span><small>3º</small></div><span class="liga"></span>
+        <div class="vend final"><span class="bola">D</span><small>conta aqui</small></div>
+      </div>
+      <p class="muted" style="font-size:.85rem">O histórico completo fica salvo, mas o atendimento conta só para o último vendedor.</p>
+    </section>
+  </div>
+
+  <!-- ===== Acessos ===== -->
+  <section class="bloco">
+    <header>
+      <span class="eyebrow">Acessos</span>
+      <h2>Quem entra no painel</h2>
+    </header>
+    <div class="acessos">
+      <div class="papel">
+        <strong>Master · Mundo dos Bots</strong>
+        <ul><li>Único que cria contas</li><li>Gera os tokens de cada empresa</li><li>Tudo que o gerente faz</li></ul>
+      </div>
+      <div class="seta" aria-hidden="true"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15h21M18 8l7 7-7 7"/></svg></div>
+      <div class="papel">
+        <strong>Gerentes</strong>
+        <ul><li>Veem gráficos e atendimentos</li><li>Corrigem classificações</li><li>Criam origens, etiquetas e vendedores</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>Painel web com login · Bun, PostgreSQL e OpenAI · dados a partir da implantação, sem importar e-mails antigos</footer>
+</div>
