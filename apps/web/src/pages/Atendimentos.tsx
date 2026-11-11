@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Repeat } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api, qs, type AtendimentoItem, type Pagina } from "../api";
 import { BarraFiltros } from "../components/Filtros";
 import { Titulo } from "../components/Layout";
@@ -67,6 +67,7 @@ export function PaginaAtendimentos() {
 }
 
 export function TabelaAtendimentos({ itens }: { itens: AtendimentoItem[] }) {
+  const nav = useNavigate();
   return (
     <div className="-mx-4 overflow-x-auto">
       <table className="w-full min-w-[860px] text-[13px]">
@@ -82,7 +83,11 @@ export function TabelaAtendimentos({ itens }: { itens: AtendimentoItem[] }) {
         </thead>
         <tbody>
           {itens.map((a) => (
-            <tr key={a.id} className="border-b border-line last:border-0 hover:bg-surface-2">
+            <tr
+              key={a.id}
+              onClick={(e) => !(e.target as HTMLElement).closest("a,button") && nav(`/atendimentos/${a.id}`)}
+              className="border-b border-line last:border-0 hover:bg-surface-2 cursor-pointer"
+            >
               <td className="px-4 py-2.5">
                 <Link to={`/atendimentos/${a.id}`} className="block min-w-0">
                   <span className="block font-medium text-ink hover:underline">{a.clienteNome}</span>

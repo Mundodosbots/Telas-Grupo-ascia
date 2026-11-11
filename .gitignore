@@ -5,3 +5,4 @@ apps/api/public/
 *.log
 .DS_Store
 deploy/*.env
+deploy/*.completo.yml

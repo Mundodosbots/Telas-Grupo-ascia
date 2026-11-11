@@ -22,7 +22,10 @@ export function PaginaAtendimento() {
 
   return (
     <div className="grid gap-4">
-      <button onClick={() => nav(-1)} className="flex w-fit items-center gap-1 text-sm text-muted hover:text-ink cursor-pointer">
+      <button
+        // Aberto por link direto (sem histórico no app)? Volta para a lista em vez de sair do sistema
+        onClick={() => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav("/atendimentos"))}
+        className="flex w-fit items-center gap-1 text-sm text-muted hover:text-ink cursor-pointer">
         <ArrowLeft className="size-4" /> Voltar
       </button>
 

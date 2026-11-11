@@ -1,5 +1,5 @@
-import { AlertTriangle, CheckCircle2, CircleDashed, Hand, Loader2, X, XCircle } from "lucide-react";
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { AlertTriangle, Check, CheckCircle2, CircleDashed, Copy, Hand, Loader2, X, XCircle } from "lucide-react";
+import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import type { StatusClassificacao } from "../api";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -193,6 +193,26 @@ export function SeletorCor({ valor, onChange, paleta }: { valor: string; onChang
         ))}
       </div>
     </div>
+  );
+}
+
+/** Botão de copiar com retorno visual ("Copiado") — sem ele parece que nada aconteceu */
+export function BotaoCopiar({ texto, rotulo = "Copiar" }: { texto: string; rotulo?: string }) {
+  const [estado, setEstado] = useState<"ocioso" | "copiado" | "falhou">("ocioso");
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setEstado("copiado");
+    } catch {
+      setEstado("falhou");
+    }
+    setTimeout(() => setEstado("ocioso"), 2000);
+  }
+  return (
+    <Botao variante="fantasma" onClick={copiar} aria-label={rotulo} className={estado === "copiado" ? "text-good" : undefined}>
+      {estado === "copiado" ? <Check className="size-4" /> : <Copy className="size-4" />}
+      {estado === "copiado" ? "Copiado" : estado === "falhou" ? "Selecione e copie" : rotulo}
+    </Botao>
   );
 }
 

@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { api, type Empresa } from "../api";
 import { useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
-import { Alerta, Botao, Cartao, Carregando, Modal, Ponto } from "../components/ui";
+import { Alerta, Botao, BotaoCopiar, Cartao, Carregando, Modal, Ponto } from "../components/ui";
 import { useEmpresas } from "../hooks";
 import { dataHora } from "../lib/formato";
 
@@ -19,10 +19,6 @@ const EXEMPLO = {
   resumo: "Cliente viu o anúncio do Pulse no Instagram, quer dar um Argo 2019 na troca e perguntou sobre parcelas.",
   data_atribuicao: "2026-11-10T14:32:00-03:00",
 };
-
-function copiar(texto: string) {
-  navigator.clipboard?.writeText(texto).catch(() => {});
-}
 
 export function PaginaEmpresas() {
   const { usuario } = useAuth();
@@ -89,10 +85,8 @@ export function PaginaEmpresas() {
               Quando o bot atribuir uma conversa, ele faz um <b>POST</b> com JSON para o endereço abaixo, com o token da empresa no cabeçalho.
             </p>
             <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-xs">{url}</code>
-              <Botao variante="fantasma" onClick={() => copiar(url)} aria-label="Copiar endereço">
-                <Copy className="size-4" />
-              </Botao>
+              <code className="min-w-0 flex-1 truncate font-mono text-xs select-all">{url}</code>
+              <BotaoCopiar texto={url} rotulo="Copiar endereço" />
             </div>
             <div className="grid gap-1 text-ink-2">
               <p>
@@ -105,7 +99,13 @@ export function PaginaEmpresas() {
               </p>
               <p>Qualquer outro campo é guardado junto, sem erro.</p>
             </div>
-            <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-[11px] leading-relaxed">{curl}</pre>
+            <div className="grid gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-ink-2">Exemplo para testar (troque SEU_TOKEN)</span>
+                <BotaoCopiar texto={curl} rotulo="Copiar exemplo" />
+              </div>
+              <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-[11px] leading-relaxed">{curl}</pre>
+            </div>
           </div>
         </Cartao>
       </div>
@@ -127,9 +127,7 @@ export function PaginaEmpresas() {
           <Alerta tipo="aviso">Copie agora e guarde no chatbot. Por segurança ele não será mostrado de novo.</Alerta>
           <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
             <code className="min-w-0 flex-1 break-all font-mono text-xs select-all">{tokenNovo?.token}</code>
-            <Botao variante="fantasma" onClick={() => tokenNovo && copiar(tokenNovo.token)} aria-label="Copiar token">
-              <Copy className="size-4" />
-            </Botao>
+            {tokenNovo && <BotaoCopiar texto={tokenNovo.token} rotulo="Copiar token" />}
           </div>
           <div className="flex justify-end">
             <Botao variante="primario" onClick={() => setTokenNovo(null)}>

@@ -74,6 +74,8 @@ export function BarraFiltros({ extras = [] }: { extras?: ("vendedor" | "origem" 
         )}
         {extras.includes("busca") && (
           <Campo
+            // key: recria o campo quando a busca muda pelo endereço (voltar, limpar, link)
+            key={filtros.busca ?? ""}
             rotulo="Buscar"
             placeholder="Nome, telefone ou texto do resumo"
             defaultValue={filtros.busca ?? ""}
