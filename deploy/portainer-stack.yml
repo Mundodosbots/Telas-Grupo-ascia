@@ -1,0 +1,93 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════
+# Ascia Screen — Painel de Atribuições (Portainer / Docker Swarm)
+#
+# 1) DNS no Cloudflare: A `ascia-screen` → IP da VPS
+# 2) Postgres: usa o servidor da stack mb_db (serviço mb_postgres, rede CLNet),
+#    mas num BANCO PRÓPRIO (ascia_screen). O app cria o banco sozinho na
+#    primeira subida, se o usuário tiver permissão (o usuário padrão da imagem
+#    postgres tem).
+# 3) Imagem publicada no Docker Hub: mundodosbots/ascia-screen (veja o README)
+# 4) Portainer → Stacks → Add stack → cole este YML
+# 5) Variáveis no Portainer (Environment variables da stack) — OBRIGATÓRIAS:
+#      POSTGRES_PASSWORD   senha do usuário do Postgres (a mesma da stack mb_db)
+#      JWT_SECRET          segredo das sessões, mín. 32 caracteres aleatórios
+#      MASTER_EMAIL        login do usuário master (criado só no 1º deploy)
+#      MASTER_SENHA        senha inicial do master (troque depois em "Minha senha")
+#      OPENAI_API_KEY      chave da OpenAI (sem ela a classificação fica manual)
+#    Opcionais: IMAGE_TAG, POSTGRES_HOST, POSTGRES_USER, POSTGRES_DB, OPENAI_MODEL
+#    Se o host não resolver, tente POSTGRES_HOST=mb_db_mb_postgres
+#
+# URLs:
+#   https://ascia-screen.mundodosbots.com.br/                          ← Painel
+#   https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao    ← Webhook do chatbot
+#   https://ascia-screen.mundodosbots.com.br/api/saude                 ← Health check
+#
+# Nada de segredo neste arquivo: ele está no GitHub.
+# ══════════════════════════════════════════════════════════════════
+
+services:
+
+  ascia_screen:
+    image: mundodosbots/ascia-screen:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      TZ: America/Sao_Paulo
+      TZ_RELATORIOS: America/Sao_Paulo
+
+      # Postgres compartilhado (stack mb_db), banco exclusivo do painel
+      POSTGRES_HOST: ${POSTGRES_HOST:-mb_postgres}
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-mbuser}
+      POSTGRES_DB: ${POSTGRES_DB:-ascia_screen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECURE: "true"
+
+      # Usuário master criado no primeiro deploy (só ele cria outras contas)
+      MASTER_NOME: ${MASTER_NOME:-Mundo dos Bots}
+      MASTER_EMAIL: ${MASTER_EMAIL}
+      MASTER_SENHA: ${MASTER_SENHA}
+
+      # Agente de classificação
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      AGENTE_CONFIANCA_MINIMA: "0.6"
+      JANELA_REATRIBUICAO_DIAS: "30"
+    networks:
+      - CLNet
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+      labels:
+        - traefik.enable=1
+        - traefik.docker.network=CLNet
+        # Um serviço só: o app serve o painel e a API (/api) — sem strip de prefixo
+        - traefik.http.routers.ascia-screen.rule=Host(`ascia-screen.mundodosbots.com.br`)
+        - traefik.http.routers.ascia-screen.entrypoints=websecure
+        - traefik.http.routers.ascia-screen.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.ascia-screen.service=ascia-screen
+        - traefik.http.routers.ascia-screen.middlewares=ascia-screen-headers
+        - traefik.http.middlewares.ascia-screen-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.services.ascia-screen.loadbalancer.server.port=3000
+        - traefik.http.services.ascia-screen.loadbalancer.passHostHeader=true
+
+networks:
+  CLNet:
+    external: true
+    name: CLNet

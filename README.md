@@ -54,7 +54,7 @@ Content-Type: application/json
 Exemplo:
 
 ```bash
-curl -X POST https://painel.seudominio.com.br/api/webhook/atribuicao \
+curl -X POST https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao \
   -H "Authorization: Bearer whk_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,17 +84,43 @@ Abra `http://localhost:3000`, entre com `MASTER_EMAIL` / `MASTER_SENHA` e, em **
 
 Na primeira subida o app aplica as migrações e cria as 3 empresas, origens e etiquetas iniciais e o usuário master. Isso é idempotente: rodar de novo só cria o que faltar.
 
-### Produção com domínio (HTTPS)
+## Produção: VPS com Portainer + Traefik
 
-1. Aponte o DNS do domínio para o servidor.
-2. No `.env`: `DOMINIO=painel.seudominio.com.br` e `COOKIE_SECURE=true`.
-3. `docker compose --profile https up -d --build`. O Caddy obtém o certificado sozinho.
+Endereço: **https://ascia-screen.mundodosbots.com.br**. Segue o mesmo padrão das outras stacks da Mundo dos Bots: Docker Swarm, Traefik na rede `CLNet` com `letsencryptresolver` e Postgres da stack `mb_db`. O painel usa um **banco próprio** (`ascia_screen`) nesse servidor e cria o banco sozinho na primeira subida.
 
-### Backup do banco
+**1. Publicar a imagem no Docker Hub** (na máquina de desenvolvimento, com `docker login` feito numa conta com acesso à organização `mundodosbots`):
 
 ```bash
-docker compose exec db pg_dump -U painel painel > backup.sql
+docker build -t mundodosbots/ascia-screen:latest -t mundodosbots/ascia-screen:$(git rev-parse --short HEAD) .
+docker push mundodosbots/ascia-screen --all-tags
 ```
+
+**2. DNS:** no Cloudflare, registro `A` `ascia-screen` → IP da VPS.
+
+**3. Portainer → Stacks → Add stack:** cole [deploy/portainer-stack.yml](deploy/portainer-stack.yml) e preencha as variáveis:
+
+| Variável | Obrigatória | O que é |
+|---|---|---|
+| `POSTGRES_PASSWORD` | sim | Senha do usuário do Postgres (a mesma da stack `mb_db`) |
+| `JWT_SECRET` | sim | Segredo das sessões, 32+ caracteres aleatórios |
+| `MASTER_EMAIL` / `MASTER_SENHA` | sim, no 1º deploy | Login master inicial (troque a senha depois pela tela) |
+| `OPENAI_API_KEY` | recomendada | Sem ela, a classificação fica manual |
+| `IMAGE_TAG` | não | Versão da imagem (padrão `latest`); use o hash do commit para poder voltar atrás |
+| `POSTGRES_HOST` / `POSTGRES_USER` / `POSTGRES_DB` | não | Padrões: `mb_postgres`, `mbuser`, `ascia_screen` |
+
+**4. Primeiro acesso:** entre com o master, vá em **Empresas e webhook** e gere o token de cada empresa. A URL do webhook para o chatbot é `https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao`.
+
+**Atualizar:** publique a imagem nova (passo 1) e, no Portainer, abra o serviço e clique em *Update* com *Re-pull image* (ou troque o `IMAGE_TAG`). A atualização é `start-first` com rollback automático se o container novo não subir; as migrações do banco rodam sozinhas.
+
+**Backup:**
+
+```bash
+docker exec $(docker ps -q -f name=mb_db_mb_postgres) pg_dump -U mbuser ascia_screen > ascia_screen.sql
+```
+
+### Fora do Portainer (VPS simples com Docker Compose)
+
+O `docker-compose.yml` da raiz sobe app + Postgres próprio. Com `DOMINIO` e `COOKIE_SECURE=true` no `.env`, `docker compose --profile https up -d --build` adiciona um Caddy com HTTPS automático.
 
 ## Desenvolvimento (com Bun instalado)
 
