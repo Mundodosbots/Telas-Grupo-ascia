@@ -4,3 +4,4 @@ apps/api/public/
 .env
 *.log
 .DS_Store
+deploy/*.env

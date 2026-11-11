@@ -27,7 +27,7 @@ const ORIGENS: { nome: string; descricao: string; cor: string; empresa?: string 
   },
   {
     nome: "Campanha de marketing",
-    descricao: "Cliente respondeu a uma campanha de marketing própria: disparo em massa, e-mail marketing, promoção, evento, feirão.",
+    descricao: "Cliente respondeu a uma campanha de marketing geral da loja: disparo em massa, e-mail marketing, promoção, feirão. Se a campanha ou evento for de uma marca que tem origem própria (ex.: Leap Motors), use a origem da marca.",
     cor: "#eb6834",
   },
   {
@@ -52,7 +52,7 @@ const ORIGENS: { nome: string; descricao: string; cor: string; empresa?: string 
   },
   {
     nome: "Campanha Leap Motors",
-    descricao: "Cliente veio de propaganda ou campanha específica da Leap Motors (lançamentos, test drive Leap, mídia da marca).",
+    descricao: "Cliente veio de propaganda, campanha ou evento da Leap Motors / Leapmotor: lançamentos (C10, T03 etc.), eventos em shopping, ações de test drive da marca, mídia da marca.",
     cor: "#e34948",
     empresa: "asia-leap-motors",
   },

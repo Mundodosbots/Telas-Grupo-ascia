@@ -39,6 +39,7 @@ Sua tarefa:
 1. ORIGEM: escolha exatamente UMA origem da lista, ou seja, de onde/como o cliente chegou até a loja.
    - Use o código (ex.: "O3"). Baseie-se em evidências do texto (menções a anúncio, Instagram, Google, campanha, indicação, RPA, etc.).
    - O campo "fonte informada pelo bot", quando existir, é uma pista forte.
+   - Origens marcadas [EXCLUSIVA DESTA EMPRESA] são mais específicas: quando se encaixarem, prefira-as às genéricas.
    - Se nenhuma origem da lista se encaixar ou o texto não der pistas, responda "${NENHUMA}".
 2. ETIQUETAS: escolha zero ou mais etiquetas da lista que descrevam o atendimento (interesse, perfil, situação). Só use etiquetas com evidência no texto.
 3. CONFIANÇA: número de 0 a 1 sobre a ORIGEM escolhida. Use menos de 0.6 quando estiver deduzindo sem evidência clara.
@@ -75,7 +76,7 @@ export async function classificarAtendimento(atendimentoId: string): Promise<voi
 
   const daEmpresa = (col: AnyPgColumn) => or(isNull(col), eq(col, a.empresaId));
   const listaOrigens = await db
-    .select({ id: origens.id, nome: origens.nome, descricao: origens.descricao })
+    .select({ id: origens.id, nome: origens.nome, descricao: origens.descricao, empresaId: origens.empresaId })
     .from(origens)
     .where(and(eq(origens.ativo, true), daEmpresa(origens.empresaId)))
     .orderBy(asc(origens.nome));
@@ -104,7 +105,7 @@ HISTÓRICO DE ATRIBUIÇÕES:
 ${textoHistorico || "(nenhum)"}
 
 ORIGENS DISPONÍVEIS:
-${listaOrigens.map((o, i) => `O${i + 1} — ${o.nome}: ${o.descricao}`).join("\n") || "(nenhuma cadastrada)"}
+${listaOrigens.map((o, i) => `O${i + 1} — ${o.nome}${o.empresaId ? " [EXCLUSIVA DESTA EMPRESA]" : ""}: ${o.descricao}`).join("\n") || "(nenhuma cadastrada)"}
 
 ETIQUETAS DISPONÍVEIS:
 ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("\n") || "(nenhuma cadastrada)"}`;
