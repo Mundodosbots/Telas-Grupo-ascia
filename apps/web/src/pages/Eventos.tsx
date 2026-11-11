@@ -4,13 +4,14 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { api, qs, type Evento, type Pagina } from "../api";
 import { Titulo } from "../components/Layout";
-import { Cartao, Carregando, cx, Paginacao, Ponto, Selecao, Vazio } from "../components/ui";
+import { BotaoCopiar, Cartao, Carregando, cx, Paginacao, Ponto, Selecao, Vazio } from "../components/ui";
 import { dataHora } from "../lib/formato";
 
-const COR_STATUS = {
-  processado: "bg-good-soft text-good",
-  duplicado: "bg-surface-2 text-ink-2",
-  rejeitado: "bg-bad-soft text-bad",
+const STATUS: Record<Evento["status"], { rotulo: string; classe: string }> = {
+  processado: { rotulo: "processado", classe: "bg-good-soft text-good" },
+  duplicado: { rotulo: "duplicado", classe: "bg-surface-2 text-ink-2" },
+  rejeitado: { rotulo: "rejeitado", classe: "bg-bad-soft text-bad" },
+  capturado: { rotulo: "captura de teste", classe: "bg-accent-soft text-accent-ink" },
 };
 
 /** Tudo que chegou pelo webhook, inclusive o que deu erro. Serve para acertar a integração com o bot. */
@@ -43,6 +44,7 @@ export function PaginaEventos() {
           <option value="processado">Processados</option>
           <option value="rejeitado">Rejeitados</option>
           <option value="duplicado">Duplicados</option>
+          <option value="capturado">Capturas de teste</option>
         </Selecao>
       </div>
       <Cartao>
@@ -62,7 +64,7 @@ export function PaginaEventos() {
                       className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left cursor-pointer"
                     >
                       <ChevronDown className={cx("size-4 text-muted transition-transform", aberto === e.id && "rotate-180")} />
-                      <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", COR_STATUS[e.status])}>{e.status}</span>
+                      <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", STATUS[e.status].classe)}>{STATUS[e.status].rotulo}</span>
                       <span className="flex items-center gap-1.5 text-sm">
                         <Ponto cor={e.empresaCor} className="size-2" />
                         {e.empresaNome ?? "—"}
@@ -77,7 +79,12 @@ export function PaginaEventos() {
                     )}
                   </div>
                   {aberto === e.id && (
-                    <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-surface-2 p-3 font-mono text-[11px] leading-snug">{JSON.stringify(e.payload, null, 2)}</pre>
+                    <div className="mt-2 grid gap-1">
+                      <div className="flex justify-end">
+                        <BotaoCopiar texto={JSON.stringify(e.payload, null, 2)} rotulo="Copiar JSON" />
+                      </div>
+                      <pre className="max-h-[32rem] overflow-auto rounded-md bg-surface-2 p-3 font-mono text-[11px] leading-snug">{JSON.stringify(e.payload, null, 2)}</pre>
+                    </div>
                   )}
                 </li>
               ))}

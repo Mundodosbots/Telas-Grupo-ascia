@@ -14,6 +14,7 @@ import { PaginaDashboard } from "./pages/Dashboard";
 import { PaginaEmpresas } from "./pages/Empresas";
 import { PaginaEventos } from "./pages/Eventos";
 import { PaginaLogin } from "./pages/Login";
+import { PaginaRegras } from "./pages/Regras";
 import { PaginaRevisar } from "./pages/Revisar";
 import { PaginaUsuarios } from "./pages/Usuarios";
 import { PaginaVendedores } from "./pages/Vendedores";
@@ -36,6 +37,7 @@ function App() {
         <Route path="vendedores" element={<PaginaVendedores />} />
         <Route path="origens" element={<PaginaCadastro tipo="origens" />} />
         <Route path="etiquetas" element={<PaginaCadastro tipo="etiquetas" />} />
+        <Route path="regras" element={<PaginaRegras />} />
         <Route path="empresas" element={<PaginaEmpresas />} />
         <Route path="eventos" element={<PaginaEventos />} />
         <Route path="usuarios" element={usuario.papel === "master" ? <PaginaUsuarios /> : <Navigate to="/" />} />

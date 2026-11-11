@@ -35,7 +35,8 @@ export const statusClassificacao = pgEnum("status_classificacao", [
   "manual",
 ]);
 
-export const statusEvento = pgEnum("status_evento", ["processado", "rejeitado", "duplicado"]);
+/** capturado = chegou pelo endpoint de teste: só guardado para inspeção, não vira atendimento */
+export const statusEvento = pgEnum("status_evento", ["processado", "rejeitado", "duplicado", "capturado"]);
 
 export const usuarios = pgTable("usuarios", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -113,10 +114,51 @@ export const clientes = pgTable(
     empresaId: uuid("empresa_id").notNull().references(() => empresas.id),
     nome: text("nome").notNull(),
     telefone: text("telefone").notNull(),
+    /** ID do contato na plataforma do chatbot (campo "id" do JSON) */
+    idExterno: text("id_externo"),
     criadoEm: criadoEm(),
     atualizadoEm: timestamp("atualizado_em", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("clientes_empresa_telefone_uq").on(t.empresaId, t.telefone)],
+  (t) => [
+    uniqueIndex("clientes_empresa_telefone_uq").on(t.empresaId, t.telefone),
+    uniqueIndex("clientes_empresa_externo_uq")
+      .on(t.empresaId, t.idExterno)
+      .where(sql`${t.idExterno} is not null`),
+  ],
+);
+
+/**
+ * Regras fixas de origem, avaliadas antes da IA, em ordem de prioridade (menor primeiro).
+ * Ex.: etiqueta da plataforma "Grow" → origem "RPA Grow".
+ */
+export const regrasOrigem = pgTable("regras_origem", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  empresaId: uuid("empresa_id").references(() => empresas.id),
+  /** etiqueta = etiqueta da plataforma; fonte = campo "Fonte do contato" */
+  campo: text("campo").notNull().default("etiqueta"),
+  /** igual | contem */
+  comparacao: text("comparacao").notNull().default("igual"),
+  valor: text("valor").notNull(),
+  origemId: uuid("origem_id")
+    .notNull()
+    .references(() => origens.id, { onDelete: "cascade" }),
+  prioridade: integer("prioridade").notNull().default(100),
+  ativo: boolean("ativo").notNull().default(true),
+  criadoEm: criadoEm(),
+});
+
+/** A plataforma manda só o ID das etiquetas: este dicionário traduz ID → nome, por empresa */
+export const dicionarioEtiquetas = pgTable(
+  "dicionario_etiquetas",
+  {
+    empresaId: uuid("empresa_id")
+      .notNull()
+      .references(() => empresas.id),
+    idExterno: text("id_externo").notNull(),
+    nome: text("nome").notNull(),
+    atualizadoEm: timestamp("atualizado_em", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.empresaId, t.idExterno] })],
 );
 
 export const webhookEventos = pgTable(
@@ -153,6 +195,12 @@ export const atendimentos = pgTable(
     origemId: uuid("origem_id").references(() => origens.id),
     resumo: text("resumo").notNull().default(""),
     fonteInformada: text("fonte_informada"),
+    /** Nomes das etiquetas da plataforma no último envio */
+    etiquetasPlataforma: text("etiquetas_plataforma").array().notNull().default(sql`'{}'::text[]`),
+    /** Campos personalizados preenchidos no último envio (sem o resumo) */
+    camposPlataforma: jsonb("campos_plataforma").$type<Record<string, string>>().notNull().default({}),
+    /** Regra que definiu a origem (quando não foi a IA nem um humano) */
+    origemRegraId: uuid("origem_regra_id").references(() => regrasOrigem.id, { onDelete: "set null" }),
     totalAtribuicoes: integer("total_atribuicoes").notNull().default(1),
     primeiraAtribuicaoEm: timestamp("primeira_atribuicao_em", { withTimezone: true }).notNull(),
     ultimaAtribuicaoEm: timestamp("ultima_atribuicao_em", { withTimezone: true }).notNull(),

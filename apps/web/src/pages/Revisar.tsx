@@ -6,7 +6,7 @@ import { EditorClassificacao } from "../components/EditorClassificacao";
 import { Titulo } from "../components/Layout";
 import { Alerta, Botao, Cartao, Carregando, Ponto, StatusBadge, Vazio } from "../components/ui";
 import { useStatus } from "../hooks";
-import { dataHora, telefone } from "../lib/formato";
+import { dataHora, telefone, trechoParaRevisao } from "../lib/formato";
 
 /** Fila de trabalho: o que a IA não conseguiu decidir sozinha */
 export function PaginaRevisar() {
@@ -61,7 +61,22 @@ export function PaginaRevisar() {
                   <p className="flex items-center gap-2 text-xs text-ink-2">
                     <Ponto cor={a.empresaCor} className="size-2" /> {a.empresaNome} · {a.vendedorNome} · {dataHora(a.ultimaAtribuicaoEm)}
                   </p>
-                  <p className="line-clamp-5 whitespace-pre-wrap text-sm text-ink">{a.resumo || <span className="text-muted">Sem resumo.</span>}</p>
+                  {a.resumo ? (
+                    (() => {
+                      const t = trechoParaRevisao(a.resumo);
+                      return (
+                        <div className="grid gap-1">
+                          {t.titulo && <p className="text-xs font-medium text-muted">{t.titulo}</p>}
+                          <p className="line-clamp-6 whitespace-pre-wrap text-sm text-ink">{t.texto}</p>
+                          <Link to={`/atendimentos/${a.id}`} className="w-fit text-xs text-accent-ink hover:underline">
+                            Ver resumo completo
+                          </Link>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <p className="text-sm text-muted">Sem resumo.</p>
+                  )}
                   {a.sugestao && (
                     <p className="text-xs text-muted">
                       A IA sugere criar a origem <b className="text-ink-2">“{a.sugestao}”</b>.

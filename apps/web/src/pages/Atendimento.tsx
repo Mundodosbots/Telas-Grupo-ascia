@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, type AtendimentoDetalhe } from "../api";
 import { EditorClassificacao } from "../components/EditorClassificacao";
+import { Markdown } from "../components/Markdown";
 import { Alerta, Cartao, Carregando, Chip, cx, Ponto, StatusBadge } from "../components/ui";
 import { dataHora, telefone } from "../lib/formato";
 
@@ -40,7 +41,7 @@ export function PaginaAtendimento() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
         <div className="grid min-w-0 content-start gap-4">
           <Cartao titulo="Resumo da conversa">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{a.resumo || <span className="text-muted">O bot não enviou resumo.</span>}</p>
+            {a.resumo ? <Markdown texto={a.resumo} /> : <p className="text-sm text-muted">O bot não enviou resumo.</p>}
             {a.fonteInformada && (
               <p className="mt-3 text-xs text-muted">
                 Fonte informada pelo bot: <span className="font-medium text-ink-2">{a.fonteInformada}</span>
@@ -61,10 +62,15 @@ export function PaginaAtendimento() {
               ) : (
                 <>
                   <p className="text-ink-2">
-                    <b className="text-ink">Análise da IA</b>
-                    {a.confianca !== null && <> · confiança {Math.round(a.confianca * 100)}%</>}
+                    <b className="text-ink">{a.origemPorRegra ? "Origem definida por regra" : "Análise da IA"}</b>
+                    {!a.origemPorRegra && a.confianca !== null && <> · confiança {Math.round(a.confianca * 100)}%</>}
                   </p>
-                  {a.justificativa && <p className="text-ink-2">“{a.justificativa}”</p>}
+                  {a.justificativa &&
+                    a.justificativa.split(" | IA: ").map((parte, i) => (
+                      <p key={i} className="text-ink-2">
+                        {i === 1 && <b className="text-ink">Etiquetas pela IA: </b>}“{parte}”
+                      </p>
+                    ))}
                   {a.sugestao && (
                     <p className="text-ink-2">
                       Nenhuma origem cadastrada serviu. Sugestão: <b className="text-ink">{a.sugestao}</b>
@@ -110,6 +116,59 @@ export function PaginaAtendimento() {
               )}
             </dl>
           </Cartao>
+
+          {(a.etiquetasPlataforma.length > 0 || Object.keys(a.camposPlataforma ?? {}).length > 0 || a.clienteIdExterno) && (
+            <Cartao titulo="Dados da plataforma">
+              <dl className="grid gap-3 text-sm">
+                {a.clienteIdExterno && (
+                  <div className="grid gap-0.5">
+                    <dt className="text-xs text-muted">ID do contato</dt>
+                    <dd className="font-mono text-xs">{a.clienteIdExterno}</dd>
+                  </div>
+                )}
+                <div className="grid gap-0.5">
+                  <dt className="text-xs text-muted">Fonte do contato</dt>
+                  <dd>{a.fonteInformada ?? <span className="text-muted">não informada</span>}</dd>
+                </div>
+                <div className="grid gap-1">
+                  <dt className="text-xs text-muted">Etiquetas na plataforma</dt>
+                  <dd className="flex flex-wrap gap-1">
+                    {a.etiquetasPlataforma.length ? (
+                      a.etiquetasPlataforma.map((e) => (
+                        <span
+                          key={e}
+                          title={e.startsWith("#") ? "Etiqueta sem nome: importe as etiquetas em Empresas e webhook" : undefined}
+                          className={cx(
+                            "rounded-full border px-2 py-0.5 text-xs",
+                            e.startsWith("#") ? "border-warn text-warn" : "border-line bg-surface-2 text-ink-2",
+                          )}
+                        >
+                          {e}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-muted">nenhuma</span>
+                    )}
+                  </dd>
+                </div>
+                {Object.keys(a.camposPlataforma ?? {}).length > 0 && (
+                  <div className="grid gap-1">
+                    <dt className="text-xs text-muted">Campos preenchidos</dt>
+                    <dd className="grid gap-1">
+                      {Object.entries(a.camposPlataforma).map(([k, v]) => (
+                        <div key={k} className="grid grid-cols-[minmax(0,9rem)_1fr] gap-2 text-xs">
+                          <span className="truncate text-muted" title={k}>
+                            {k}
+                          </span>
+                          <span className="break-words text-ink">{v}</span>
+                        </div>
+                      ))}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </Cartao>
+          )}
 
           <Cartao titulo={`Linha do tempo · ${a.linhaDoTempo.length} atribuiç${a.linhaDoTempo.length === 1 ? "ão" : "ões"}`}>
             <ol className="relative grid gap-4 border-l border-line pl-5">

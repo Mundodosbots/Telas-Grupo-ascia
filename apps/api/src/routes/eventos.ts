@@ -5,7 +5,7 @@ import { empresas, webhookEventos } from "../db/schema";
 import { protegido } from "../lib/auth";
 import { ehUuid } from "../lib/util";
 
-const STATUS = new Set(["processado", "rejeitado", "duplicado"]);
+const STATUS = new Set(["processado", "rejeitado", "duplicado", "capturado"]);
 
 /** Registro bruto de tudo que chegou pelo webhook — útil para depurar a integração com o bot */
 export const rotasEventos = new Elysia({ prefix: "/api/eventos" })
@@ -16,7 +16,7 @@ export const rotasEventos = new Elysia({ prefix: "/api/eventos" })
     const onde = and(
       ehUuid(query.empresa_id) ? eq(webhookEventos.empresaId, query.empresa_id) : undefined,
       query.status && STATUS.has(query.status)
-        ? eq(webhookEventos.status, query.status as "processado" | "rejeitado" | "duplicado")
+        ? eq(webhookEventos.status, query.status as "processado" | "rejeitado" | "duplicado" | "capturado")
         : undefined,
     );
     const [{ total }] = (await db

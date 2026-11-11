@@ -13,6 +13,7 @@ import {
   vendedores,
 } from "../db/schema";
 import { env } from "../env";
+import { secaoOrigem } from "./plataforma";
 
 const NENHUMA = "NENHUMA";
 
@@ -33,13 +34,22 @@ type RespostaAgente = {
 };
 
 const INSTRUCOES = `Você classifica atendimentos de concessionárias de veículos do Grupo Asia.
-Recebe o resumo de uma conversa de WhatsApp entre um cliente e o chatbot, que foi atribuída a um vendedor.
+Recebe os dados de um contato de WhatsApp que o chatbot atribuiu a um vendedor: o resumo da conversa,
+as etiquetas que a plataforma colocou no contato, a fonte e outros campos preenchidos.
 
 Sua tarefa:
 1. ORIGEM: escolha exatamente UMA origem da lista, ou seja, de onde/como o cliente chegou até a loja.
-   - Use o código (ex.: "O3"). Baseie-se em evidências do texto (menções a anúncio, Instagram, Google, campanha, indicação, RPA, etc.).
-   - O campo "fonte informada pelo bot", quando existir, é uma pista forte.
+   - Use o código (ex.: "O3"). Baseie-se em evidências: a seção "Origem do contato" do resumo, a primeira mensagem do cliente
+     (ex.: "quero detalhes do anúncio..."), a fonte do contato, as etiquetas da plataforma e menções a anúncio, Instagram,
+     Google, campanha, feirão, indicação, RPA etc.
+   - As etiquetas da plataforma ACUMULAM o histórico do contato (podem ser de campanhas antigas). Use-as como pista,
+     mas dê mais peso ao que o resumo diz sobre a conversa atual.
+   - A "fonte do contato", quando existir, é uma pista forte. Valores comuns:
+     "ads" = clicou num anúncio da Meta (Instagram/Facebook);
+     "API" = entrou por integração com outro sistema (ex.: RPA Grow — confirme pelas etiquetas e pelo resumo);
+     "mensagem aberta" = o cliente chamou direto, sem anúncio — use o resumo para ver se foi indicação, site, portal, cliente antigo etc.
    - Origens marcadas [EXCLUSIVA DESTA EMPRESA] são mais específicas: quando se encaixarem, prefira-as às genéricas.
+   - Cliente que menciona um anúncio sem dizer onde viu: use uma origem de anúncio genérica, se existir, com confiança moderada.
    - Se nenhuma origem da lista se encaixar ou o texto não der pistas, responda "${NENHUMA}".
 2. ETIQUETAS: escolha zero ou mais etiquetas da lista que descrevam o atendimento (interesse, perfil, situação). Só use etiquetas com evidência no texto.
 3. CONFIANÇA: número de 0 a 1 sobre a ORIGEM escolhida. Use menos de 0.6 quando estiver deduzindo sem evidência clara.
@@ -56,6 +66,11 @@ export async function classificarAtendimento(atendimentoId: string): Promise<voi
       empresaNome: empresas.nome,
       resumo: atendimentos.resumo,
       fonte: atendimentos.fonteInformada,
+      etiquetasPlataforma: atendimentos.etiquetasPlataforma,
+      camposPlataforma: atendimentos.camposPlataforma,
+      origemRegraId: atendimentos.origemRegraId,
+      origemAtualId: atendimentos.origemId,
+      justificativaAtual: atendimentos.classificacaoJustificativa,
       clienteNome: clientes.nome,
       vendedorNome: vendedores.nome,
     })
@@ -65,6 +80,8 @@ export async function classificarAtendimento(atendimentoId: string): Promise<voi
     .innerJoin(vendedores, eq(vendedores.id, atendimentos.vendedorAtualId))
     .where(eq(atendimentos.id, atendimentoId));
   if (!a) return;
+  // Origem já definida por regra: a IA só escolhe as etiquetas
+  const origemFixa = a.origemRegraId && a.origemAtualId ? a.origemAtualId : null;
 
   // Resumos anteriores ajudam quando o último é curto ("repassado para fulano")
   const historico = await db
@@ -89,16 +106,30 @@ export async function classificarAtendimento(atendimentoId: string): Promise<voi
   const codOrigem = new Map(listaOrigens.map((o, i) => [`O${i + 1}`, o.id]));
   const codEtiqueta = new Map(listaEtiquetas.map((e, i) => [`E${i + 1}`, e.id]));
 
+  // Resumos antigos só entram quando são curtos e diferentes do atual (o da plataforma já traz o histórico todo)
   const textoHistorico = historico
-    .map((h, i) => `#${i + 1} (${h.em.toISOString()}) → ${h.vendedor}${h.fonte ? ` | fonte: ${h.fonte}` : ""}\n${h.resumo || "(sem resumo)"}`)
-    .join("\n\n");
+    .map((h, i) => {
+      const extra = h.resumo && h.resumo !== a.resumo && h.resumo.length <= 1500 ? `\n${h.resumo}` : "";
+      return `#${i + 1} (${h.em.toISOString()}) → ${h.vendedor}${h.fonte ? ` | fonte: ${h.fonte}` : ""}${extra}`;
+    })
+    .join("\n");
+
+  const secao = secaoOrigem(a.resumo);
+  const campos = Object.entries(a.camposPlataforma ?? {})
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+  const origemFixaNome = origemFixa ? (listaOrigens.find((o) => o.id === origemFixa)?.nome ?? null) : null;
 
   const entrada = `EMPRESA: ${a.empresaNome}
 CLIENTE: ${a.clienteNome}
 VENDEDOR ATUAL: ${a.vendedorNome}
-FONTE INFORMADA PELO BOT: ${a.fonte ?? "(não informada)"}
+FONTE DO CONTATO: ${a.fonte ?? "(não informada)"}
+ETIQUETAS DA PLATAFORMA: ${a.etiquetasPlataforma.length ? a.etiquetasPlataforma.join(", ") : "(nenhuma)"}
+${origemFixaNome ? `\nORIGEM JÁ DEFINIDA POR REGRA: ${origemFixaNome}. Escolha esse código e foque nas ETIQUETAS.\n` : ""}${secao ? `\nSEÇÃO "ORIGEM DO CONTATO" DO RESUMO:\n${secao}\n` : ""}
+OUTROS CAMPOS DO CONTATO:
+${campos || "(nenhum)"}
 
-RESUMO MAIS RECENTE:
+RESUMO COMPLETO:
 ${a.resumo || "(vazio)"}
 
 HISTÓRICO DE ATRIBUIÇÕES:
@@ -145,9 +176,16 @@ ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("
   if (!conteudo) throw new Error("Resposta vazia do modelo");
   const r = JSON.parse(conteudo) as RespostaAgente;
 
-  const origemId = r.origem === NENHUMA ? null : (codOrigem.get(r.origem) ?? null);
   const etiquetaIds = [...new Set(r.etiquetas.map((c) => codEtiqueta.get(c)).filter((x): x is string => !!x))];
-  const confianca = Math.max(0, Math.min(1, Number(r.confianca) || 0));
+  let origemId = r.origem === NENHUMA ? null : (codOrigem.get(r.origem) ?? null);
+  let confianca = Math.max(0, Math.min(1, Number(r.confianca) || 0));
+  let justificativa = r.justificativa;
+  if (origemFixa) {
+    // A regra manda na origem; da IA ficam as etiquetas
+    origemId = origemFixa;
+    confianca = 1;
+    justificativa = `${(a.justificativaAtual ?? "").split(" | IA:")[0]} | IA: ${r.justificativa}`;
+  }
   const status = origemId && confianca >= env.AGENTE_CONFIANCA_MINIMA ? "classificado" : "revisar";
 
   await db.transaction(async (tx) => {
@@ -158,7 +196,7 @@ ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("
         origemId,
         classificacaoStatus: status,
         classificacaoConfianca: confianca,
-        classificacaoJustificativa: r.justificativa,
+        classificacaoJustificativa: justificativa,
         classificacaoSugestao: origemId ? null : r.sugestao_nova_origem,
         classificacaoErro: null,
         classificadoEm: new Date(),

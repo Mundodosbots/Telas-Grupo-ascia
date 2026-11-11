@@ -9,6 +9,7 @@ import { rotasEtiquetas, rotasOrigens } from "./routes/cadastros";
 import { rotasDashboard } from "./routes/dashboard";
 import { rotasEmpresas } from "./routes/empresas";
 import { rotasEventos } from "./routes/eventos";
+import { rotasDicionario, rotasRegras } from "./routes/regras";
 import { rotasUsuarios } from "./routes/usuarios";
 import { rotasVendedores } from "./routes/vendedores";
 import { rotasWebhook } from "./routes/webhook";
@@ -50,6 +51,8 @@ const app = new Elysia()
   .use(rotasAtendimentos)
   .use(rotasDashboard)
   .use(rotasEventos)
+  .use(rotasRegras)
+  .use(rotasDicionario)
   // Front-end (SPA) compilado em ../public — qualquer rota que não seja /api cai no index.html
   .get("/*", ({ params, set }) => {
     const caminho = String(params["*"] ?? "");

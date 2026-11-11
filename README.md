@@ -30,7 +30,24 @@ Chatbot ──POST /api/webhook/atribuicao (token da empresa)──► API (Bun 
 | Acessos | **Master** (Mundo dos Bots): cria contas e gera tokens. **Gerente**: vê tudo, corrige classificações e mantém cadastros. |
 | Período | Os filtros de data usam a data da **última atribuição**, no fuso `TZ_RELATORIOS`. |
 
-## Contrato do webhook
+## Formato da plataforma (Mundo dos Bots)
+
+O webhook reconhece sozinho o JSON da plataforma, que é o **contato inteiro** (`id`, `full_name`, `phone`, `tags: [{id}]`, `custom_fields: [{name, value}]`). Basta configurar o disparo para `POST /api/webhook/atribuicao?token=<token da empresa>`, sem montar JSON próprio.
+
+| Dado no painel | De onde vem |
+|---|---|
+| Cliente | `full_name`, `phone`; reconhecido pelo `id` do contato (atualiza nome/telefone se mudarem) |
+| Vendedor | campo personalizado **`Consultor`** (vazio → "Sem consultor") |
+| Resumo | campo personalizado **`Resumo conversa`** (a IA dá destaque à seção "Origem do contato") |
+| Fonte | campo personalizado **`Fonte do contato`** |
+| Etiquetas | `tags` traduzidas pelo **dicionário** da empresa (Empresas e webhook → Importar etiquetas) |
+| Outros campos | guardados e mostrados no atendimento; pesquisas de satisfação são ignoradas |
+
+**Origem:** primeiro as **Regras de origem** (ex.: etiqueta `Grow` → RPA Grow), na ordem da tela; se nenhuma bater, a IA decide pelo resumo, etiquetas, fonte e campos. Com regra, a IA só escolhe as etiquetas do painel.
+
+**Reenvios:** o mesmo contato com o **mesmo consultor** só atualiza os dados (não conta repasse). Com **outro consultor**, entra na linha do tempo e a contagem passa para ele. Depois de `JANELA_REATRIBUICAO_DIAS` sem atribuição, o contato abre um atendimento novo.
+
+## Contrato do webhook (JSON genérico)
 
 ```
 POST /api/webhook/atribuicao

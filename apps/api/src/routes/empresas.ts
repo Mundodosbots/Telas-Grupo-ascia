@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { empresas } from "../db/schema";
@@ -17,7 +17,15 @@ const campos = {
 
 export const rotasEmpresas = new Elysia({ prefix: "/api/empresas" })
   .use(protegido())
-  .get("/", () => db.select(campos).from(empresas).orderBy(asc(empresas.nome)))
+  .get("/", () =>
+    db
+      .select({
+        ...campos,
+        etiquetasPlataforma: sql<number>`(select count(*)::int from dicionario_etiquetas d where d.empresa_id = ${empresas.id})`,
+      })
+      .from(empresas)
+      .orderBy(asc(empresas.nome)),
+  )
   .patch(
     "/:id",
     async ({ params, body, usuario, set }) => {

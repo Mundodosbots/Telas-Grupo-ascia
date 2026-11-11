@@ -7,8 +7,76 @@ import { ehUuid, normalizarNome } from "../lib/util";
 
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
 
+/** "RUDISON  MORETTI " → "RUDISON MORETTI" */
+const limparNome = (s: string) => s.replace(/\s+/g, " ").trim();
+
 export const rotasVendedores = new Elysia({ prefix: "/api/vendedores" })
   .use(protegido())
+  /**
+   * Importa os administradores (atendentes) exportados da plataforma como vendedores da empresa:
+   * [{ "id": "1000859765", "full_name": "RUDISON  MORETTI", "email": "..." }, ...]
+   * Casa pelo ID da plataforma ou pelo nome; cria quem não existe e completa e-mail/ID de quem já existe.
+   */
+  .post(
+    "/importar",
+    async ({ body, set }) => {
+      const itens = body.itens
+        .map((i) => ({
+          idExterno: String(i.id ?? "").trim() || null,
+          nome: limparNome(String(i.full_name ?? [i.first_name, i.last_name].filter(Boolean).join(" ") ?? "")),
+          email: String(i.email ?? "").trim() || null,
+        }))
+        .filter((i) => i.nome);
+      if (!itens.length) {
+        set.status = 400;
+        return { erro: "Nenhum administrador válido. O formato esperado é uma lista com id e full_name." };
+      }
+      let criados = 0;
+      let atualizados = 0;
+      for (const i of itens) {
+        const nomeNormalizado = normalizarNome(i.nome);
+        const [porId] = i.idExterno
+          ? await db.select().from(vendedores).where(and(eq(vendedores.empresaId, body.empresa_id), eq(vendedores.idExterno, i.idExterno)))
+          : [];
+        const [existente] = porId
+          ? [porId]
+          : await db
+              .select()
+              .from(vendedores)
+              .where(
+                and(
+                  eq(vendedores.empresaId, body.empresa_id),
+                  sql`(${vendedores.nomeNormalizado} = ${nomeNormalizado} or ${nomeNormalizado} = any(${vendedores.apelidos}))`,
+                ),
+              );
+        if (existente) {
+          await db
+            .update(vendedores)
+            .set({ idExterno: existente.idExterno ?? i.idExterno, email: existente.email ?? i.email })
+            .where(eq(vendedores.id, existente.id));
+          atualizados++;
+        } else {
+          await db.insert(vendedores).values({ empresaId: body.empresa_id, nome: i.nome, nomeNormalizado, idExterno: i.idExterno, email: i.email });
+          criados++;
+        }
+      }
+      return { ok: true, criados, atualizados };
+    },
+    {
+      body: t.Object({
+        empresa_id: t.String({ format: "uuid" }),
+        itens: t.Array(
+          t.Object({
+            id: t.Optional(t.Union([t.String(), t.Number()])),
+            full_name: t.Optional(t.String()),
+            first_name: t.Optional(t.String()),
+            last_name: t.Optional(t.String()),
+            email: t.Optional(t.String()),
+          }),
+        ),
+      }),
+    },
+  )
   .get("/", ({ query }) =>
     db
       .select({

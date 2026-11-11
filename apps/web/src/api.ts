@@ -43,6 +43,7 @@ export type Empresa = {
   ativo: boolean;
   tokenPrefixo: string | null;
   tokenGeradoEm: string | null;
+  etiquetasPlataforma?: number;
 };
 
 export type Vendedor = {
@@ -95,8 +96,27 @@ export type AtendimentoItem = {
 
 export type Pagina<T> = { total: number; pagina: number; porPagina: number; itens: T[] };
 
+export type Regra = {
+  id: string;
+  empresaId: string | null;
+  empresaNome: string | null;
+  campo: "etiqueta" | "fonte";
+  comparacao: "igual" | "contem";
+  valor: string;
+  origemId: string;
+  origemNome: string;
+  origemCor: string;
+  prioridade: number;
+  ativo: boolean;
+  uso: number;
+};
+
 export type AtendimentoDetalhe = Omit<AtendimentoItem, "status"> & {
   status: StatusClassificacao;
+  etiquetasPlataforma: string[];
+  camposPlataforma: Record<string, string>;
+  origemPorRegra: boolean;
+  clienteIdExterno: string | null;
   clienteId: string;
   conversaId: string | null;
   fonteInformada: string | null;
@@ -160,7 +180,7 @@ export type Evento = {
   empresaNome: string | null;
   empresaCor: string | null;
   idExterno: string | null;
-  status: "processado" | "rejeitado" | "duplicado";
+  status: "processado" | "rejeitado" | "duplicado" | "capturado";
   erro: string | null;
   atendimentoId: string | null;
   recebidoEm: string;

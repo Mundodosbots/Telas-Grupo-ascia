@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, sqlClient } from "./client";
-import { empresas, etiquetas, origens, usuarios } from "./schema";
+import { empresas, etiquetas, origens, regrasOrigem, usuarios } from "./schema";
 import { rodarMigracoes } from "./migrate";
 
 const EMPRESAS = [
@@ -24,6 +24,12 @@ const ORIGENS: { nome: string; descricao: string; cor: string; empresa?: string 
     nome: "Google",
     descricao: "Cliente veio de pesquisa ou anúncio no Google, Google Maps ou Perfil da Empresa no Google.",
     cor: "#2a78d6",
+  },
+  {
+    nome: "Anúncio (plataforma não identificada)",
+    descricao:
+      "Cliente chegou por causa de um anúncio (ex.: primeira mensagem 'quero mais detalhes do anúncio...'), mas não dá para saber se foi Instagram, Facebook, Google ou portal.",
+    cor: "#eda100",
   },
   {
     nome: "Campanha de marketing",
@@ -96,6 +102,19 @@ export async function semear() {
   for (const et of ETIQUETAS) {
     const [existe] = await db.select({ id: etiquetas.id }).from(etiquetas).where(eq(etiquetas.nome, et.nome));
     if (!existe) await db.insert(etiquetas).values(et);
+  }
+
+  // Regras iniciais (só quando ainda não há nenhuma):
+  //   1º etiqueta "Grow" da plataforma → RPA Grow
+  //   2º fonte do contato "ads" → Anúncio Meta
+  const [{ regras }] = (await db.select({ regras: sql<number>`count(*)::int` }).from(regrasOrigem)) as [{ regras: number }];
+  if (regras === 0) {
+    const origemGlobal = async (nome: string) =>
+      (await db.select({ id: origens.id }).from(origens).where(and(eq(origens.nome, nome), isNull(origens.empresaId))))[0]?.id;
+    const grow = await origemGlobal("RPA Grow");
+    const meta = await origemGlobal("Anúncio Meta (Instagram/Facebook)");
+    if (grow) await db.insert(regrasOrigem).values({ campo: "etiqueta", comparacao: "igual", valor: "Grow", origemId: grow, prioridade: 10 });
+    if (meta) await db.insert(regrasOrigem).values({ campo: "fonte", comparacao: "igual", valor: "ads", origemId: meta, prioridade: 20 });
   }
 
   const [{ total }] = (await db

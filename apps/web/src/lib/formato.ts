@@ -50,5 +50,22 @@ export function diasEntre(inicio: string, fim: string): string[] {
 
 export const diaCurto = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
+/**
+ * Trecho útil do resumo para quem vai revisar: a seção "Origem do contato" (resumo da plataforma)
+ * ou, se não houver, o começo do texto. Sem símbolos de markdown.
+ */
+export function trechoParaRevisao(resumo: string): { titulo: string | null; texto: string } {
+  const secoes = resumo.split(/\n(?=#{1,4} )/);
+  const origem = secoes.find((s) => /^#{1,4}\s*\d*\.?\s*origem/i.test(s.trim()));
+  const limpar = (s: string) =>
+    s
+      .split("\n")
+      .filter((l) => !/^#{1,4}\s/.test(l.trim()))
+      .map((l) => l.trim().replace(/^[-*]\s+/, "• ").replace(/\*\*/g, "").replace(/`/g, ""))
+      .filter(Boolean)
+      .join("\n");
+  return origem ? { titulo: "Origem do contato, segundo o resumo", texto: limpar(origem) } : { titulo: null, texto: limpar(resumo) };
+}
+
 /** Paleta categórica validada (claro). Ordem fixa: nunca reciclar. */
 export const PALETA = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948", "#898781"];

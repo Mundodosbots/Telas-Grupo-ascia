@@ -2,6 +2,7 @@ import {
   BarChart3,
   Building2,
   ClipboardCheck,
+  GitBranch,
   KeyRound,
   ListChecks,
   LogOut,
@@ -33,6 +34,7 @@ const SECOES: { titulo?: string; itens: Item[] }[] = [
     itens: [
       { para: "/vendedores", rotulo: "Vendedores", Icone: UserSquare2 },
       { para: "/origens", rotulo: "Origens", Icone: Waypoints },
+      { para: "/regras", rotulo: "Regras de origem", Icone: GitBranch },
       { para: "/etiquetas", rotulo: "Etiquetas", Icone: Tags },
     ],
   },
