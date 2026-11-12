@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, sqlClient } from "./client";
-import { empresas, etiquetas, origens, regrasOrigem, usuarios } from "./schema";
+import { dicionarioEtiquetas, empresas, etiquetas, origens, regrasOrigem, usuarios } from "./schema";
 import { rodarMigracoes } from "./migrate";
 
 const EMPRESAS = [
@@ -75,6 +75,9 @@ const ETIQUETAS = [
   { nome: "Lead quente", descricao: "Demonstrou intenção clara de compra no curto prazo.", cor: "#e34948" },
 ];
 
+/** IDs de etiqueta da plataforma que valem para todas as contas */
+const ETIQUETAS_CONHECIDAS = [{ idExterno: "706325", nome: "Grow" }];
+
 export async function semear() {
   await rodarMigracoes();
 
@@ -102,6 +105,12 @@ export async function semear() {
   for (const et of ETIQUETAS) {
     const [existe] = await db.select({ id: etiquetas.id }).from(etiquetas).where(eq(etiquetas.nome, et.nome));
     if (!existe) await db.insert(etiquetas).values(et);
+  }
+
+  // Etiqueta "Grow" da plataforma (mesmo ID nas 3 contas): garante que a regra do Grow funcione
+  // mesmo antes de alguém importar o dicionário de etiquetas da empresa.
+  for (const id of slugParaId.values()) {
+    await db.insert(dicionarioEtiquetas).values(ETIQUETAS_CONHECIDAS.map((e) => ({ empresaId: id, ...e }))).onConflictDoNothing();
   }
 
   // Regras iniciais (só quando ainda não há nenhuma):

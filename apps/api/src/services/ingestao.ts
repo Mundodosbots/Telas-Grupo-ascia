@@ -206,7 +206,8 @@ export async function aplicarRegras(tx: Tx | typeof db, empresaId: string, etiqu
     .where(and(eq(regrasOrigem.ativo, true), or(isNull(regrasOrigem.empresaId), eq(regrasOrigem.empresaId, empresaId))))
     .orderBy(asc(regrasOrigem.prioridade), asc(regrasOrigem.criadoEm));
 
-  const etqs = etiquetas.map(normalizarNome);
+  // Etiqueta sem nome chega como "#706325": a regra também pode ser escrita com o número
+  const etqs = etiquetas.flatMap((e) => (e.startsWith("#") ? [normalizarNome(e), normalizarNome(e.slice(1))] : [normalizarNome(e)]));
   const fonteN = fonte ? normalizarNome(fonte) : "";
   for (const { r, origemNome } of regras) {
     const v = normalizarNome(r.valor);

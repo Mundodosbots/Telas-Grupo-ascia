@@ -1,6 +1,9 @@
 import { Elysia } from "elysia";
 import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
+import { sql } from "drizzle-orm";
+import { db } from "./db/client";
+import { atendimentos } from "./db/schema";
 import { semear } from "./db/seed";
 import { env } from "./env";
 import { rotasAtendimentos } from "./routes/atendimentos";
@@ -9,7 +12,7 @@ import { rotasEtiquetas, rotasOrigens } from "./routes/cadastros";
 import { rotasDashboard } from "./routes/dashboard";
 import { rotasEmpresas } from "./routes/empresas";
 import { rotasEventos } from "./routes/eventos";
-import { rotasDicionario, rotasRegras } from "./routes/regras";
+import { reaplicarRegras, rotasDicionario, rotasRegras } from "./routes/regras";
 import { rotasUsuarios } from "./routes/usuarios";
 import { rotasVendedores } from "./routes/vendedores";
 import { rotasWebhook } from "./routes/webhook";
@@ -72,6 +75,16 @@ const app = new Elysia()
   .listen(env.PORT);
 
 await iniciarAgente();
+
+// Atendimentos que chegaram com etiquetas só em número (#ID) ganham o nome e as regras de novo
+const [{ pendentes }] = (await db
+  .select({ pendentes: sql<number>`count(*)::int` })
+  .from(atendimentos)
+  .where(sql`${atendimentos.classificacaoStatus} <> 'manual' and exists (select 1 from unnest(${atendimentos.etiquetasPlataforma}) e where e like '#%')`)) as [
+  { pendentes: number },
+];
+if (pendentes) console.log("Etiquetas sem nome reavaliadas:", await reaplicarRegras());
+
 console.log(`Painel rodando em http://localhost:${app.server?.port}`);
 
 for (const sinal of ["SIGINT", "SIGTERM"] as const) {
