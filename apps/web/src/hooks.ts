@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
 import { api, type Empresa, type ItemCadastro, type StatusSistema, type Vendedor } from "./api";
 import { diasAtras, isoDia } from "./lib/formato";
@@ -8,7 +9,26 @@ export const useVendedores = () => useQuery({ queryKey: ["vendedores"], queryFn:
 export const useOrigens = () => useQuery({ queryKey: ["origens"], queryFn: () => api<ItemCadastro[]>("/origens"), staleTime: 30_000 });
 export const useEtiquetas = () => useQuery({ queryKey: ["etiquetas"], queryFn: () => api<ItemCadastro[]>("/etiquetas"), staleTime: 30_000 });
 export const useStatus = () =>
-  useQuery({ queryKey: ["status"], queryFn: () => api<StatusSistema>("/status"), refetchInterval: 30_000 });
+  useQuery({ queryKey: ["status"], queryFn: () => api<StatusSistema>("/status"), refetchInterval: 10_000 });
+
+/**
+ * Atualização automática: o status é consultado a cada 10 s (só com a aba visível).
+ * Quando chega evento novo ou algum atendimento muda (IA classificou, alguém confirmou),
+ * as telas abertas buscam os dados de novo, sem precisar apertar F5.
+ */
+export function useAtualizacaoAutomatica() {
+  const qc = useQueryClient();
+  const { data } = useStatus();
+  const assinatura = data ? `${data.ultimoEvento?.recebidoEm ?? ""}|${data.ultimaAlteracao ?? ""}|${data.pendentes}|${data.aRevisar}` : null;
+  const anterior = useRef<string | null>(null);
+  useEffect(() => {
+    if (!assinatura) return;
+    if (anterior.current && anterior.current !== assinatura) {
+      qc.invalidateQueries({ predicate: (q) => !["eu", "status"].includes(String(q.queryKey[0])) });
+    }
+    anterior.current = assinatura;
+  }, [assinatura, qc]);
+}
 
 export const PERIODOS = [
   { id: "7d", rotulo: "Últimos 7 dias" },

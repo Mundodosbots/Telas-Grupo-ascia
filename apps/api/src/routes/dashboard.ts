@@ -100,6 +100,8 @@ export const rotasDashboard = new Elysia({ prefix: "/api" })
       .select({
         pendentes: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('pendente','processando'))::int`,
         aRevisar: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('revisar','erro'))::int`,
+        // Muda sempre que algum atendimento muda: as telas abertas usam para se atualizar sozinhas
+        ultimaAlteracao: sql<string | null>`max(${atendimentos.atualizadoEm})::text`,
       })
       .from(atendimentos);
     const [ultimoEvento] = await db

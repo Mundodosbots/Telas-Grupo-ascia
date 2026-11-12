@@ -15,6 +15,7 @@ import { PaginaEmpresas } from "./pages/Empresas";
 import { PaginaEventos } from "./pages/Eventos";
 import { PaginaLogin } from "./pages/Login";
 import { PaginaRegras } from "./pages/Regras";
+import { PaginaRelatorios } from "./pages/Relatorios";
 import { PaginaRevisar } from "./pages/Revisar";
 import { PaginaUsuarios } from "./pages/Usuarios";
 import { PaginaVendedores } from "./pages/Vendedores";
@@ -34,6 +35,7 @@ function App() {
         <Route path="atendimentos" element={<PaginaAtendimentos />} />
         <Route path="atendimentos/:id" element={<PaginaAtendimento />} />
         <Route path="revisar" element={<PaginaRevisar />} />
+        <Route path="relatorios" element={<PaginaRelatorios />} />
         <Route path="vendedores" element={<PaginaVendedores />} />
         <Route path="origens" element={<PaginaCadastro tipo="origens" />} />
         <Route path="etiquetas" element={<PaginaCadastro tipo="etiquetas" />} />

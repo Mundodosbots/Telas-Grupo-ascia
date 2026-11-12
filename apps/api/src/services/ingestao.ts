@@ -223,7 +223,15 @@ export async function aplicarRegras(tx: Tx | typeof db, empresaId: string, etiqu
 }
 
 export type ResultadoIngestao =
-  | { status: "processado"; eventoId: string; atendimentoId: string; novoAtendimento: boolean; reenvio: boolean }
+  | {
+      status: "processado";
+      eventoId: string;
+      atendimentoId: string;
+      novoAtendimento: boolean;
+      reenvio: boolean;
+      /** Para o log do container */
+      resumoLog: { cliente: string; telefone: string; vendedor: string; regra: string | null };
+    }
   | { status: "duplicado"; eventoId: string; atendimentoId: string | null }
   | { status: "rejeitado"; eventoId: string; erro: string };
 
@@ -406,7 +414,14 @@ export async function ingerirAtribuicao(empresa: Empresa, payload: unknown): Pro
 
       await tx.update(webhookEventos).set({ atendimentoId }).where(eq(webhookEventos.id, evento!.id));
 
-      return { status: "processado" as const, eventoId: evento!.id, atendimentoId, novoAtendimento, reenvio };
+      return {
+        status: "processado" as const,
+        eventoId: evento!.id,
+        atendimentoId,
+        novoAtendimento,
+        reenvio,
+        resumoLog: { cliente: dados.clienteNome, telefone: dados.clienteTelefone, vendedor: vendedor.nome, regra: regra?.descricao ?? null },
+      };
     });
   } catch (e) {
     const erro = e instanceof Error ? e.message : String(e);

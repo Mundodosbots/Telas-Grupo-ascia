@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db/client";
 import { empresas, webhookEventos } from "../db/schema";
+import { contato, registrar } from "../lib/log";
 import { sha256 } from "../lib/util";
 import { acordarAgente } from "../services/classificador";
 import { ingerirAtribuicao } from "../services/ingestao";
@@ -43,12 +44,26 @@ export const rotasWebhook = new Elysia({ prefix: "/api/webhook" })
     const r = await ingerirAtribuicao(empresa, body);
 
     if (r.status === "rejeitado") {
+      const p = (body ?? {}) as Record<string, any>;
+      registrar("WEBHOOK", "Evento REJEITADO", empresa.nome, p.full_name ?? p.cliente?.nome, contato(p.phone ?? p.cliente?.telefone), `erro: ${r.erro}`);
       set.status = 422;
       return { ok: false, erro: r.erro, evento_id: r.eventoId };
     }
     if (r.status === "duplicado") {
+      registrar("WEBHOOK", "Evento duplicado (ignorado)", empresa.nome, `evento ${r.eventoId}`);
       return { ok: true, duplicado: true, evento_id: r.eventoId, atendimento_id: r.atendimentoId };
     }
+    const l = r.resumoLog;
+    registrar(
+      "WEBHOOK",
+      "Evento recebido",
+      empresa.nome,
+      l.cliente,
+      contato(l.telefone),
+      `consultor: ${l.vendedor}`,
+      r.novoAtendimento ? "novo atendimento" : r.reenvio ? "atualização (mesmo consultor)" : "repasse de consultor",
+      l.regra ? l.regra.replace(/^Regra: /, "origem pela regra: ") : "origem: IA vai analisar o resumo",
+    );
     acordarAgente();
     set.status = 202;
     return {

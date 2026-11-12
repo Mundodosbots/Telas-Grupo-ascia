@@ -94,7 +94,23 @@ export type AtendimentoItem = {
   etiquetas: EtiquetaMini[];
 };
 
-export type Pagina<T> = { total: number; pagina: number; porPagina: number; itens: T[] };
+export type LinhaRelatorio = {
+  id: string;
+  empresaNome: string;
+  clienteNome: string;
+  clienteTelefone: string;
+  vendedorNome: string;
+  origemNome: string | null;
+  totalAtribuicoes: number;
+  primeiraAtribuicaoEm: string;
+  ultimaAtribuicaoEm: string;
+  status: StatusClassificacao;
+  etiquetasPlataforma: string[];
+  etiquetas: string[];
+};
+export type ListaRelatorio = { total: number; limite: number; itens: LinhaRelatorio[] };
+
+export type Pagina<T> ={ total: number; pagina: number; porPagina: number; itens: T[] };
 
 export type Regra = {
   id: string;
@@ -173,6 +189,7 @@ export type StatusSistema = {
   pendentes: number;
   aRevisar: number;
   ultimoEvento: { recebidoEm: string; status: string } | null;
+  ultimaAlteracao: string | null;
 };
 
 export type Evento = {

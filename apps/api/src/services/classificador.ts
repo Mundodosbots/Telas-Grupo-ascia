@@ -13,9 +13,12 @@ import {
   vendedores,
 } from "../db/schema";
 import { env } from "../env";
+import { contato, registrar } from "../lib/log";
 import { secaoOrigem } from "./plataforma";
 
 const NENHUMA = "NENHUMA";
+/** Origem usada quando o resumo não traz nenhuma pista (ex.: conversa só com protocolo e saudação do consultor) */
+export const ORIGEM_SEM_EVIDENCIA = "Contato direto / orgânico";
 
 let cliente: OpenAI | null = null;
 function openai(): OpenAI {
@@ -72,6 +75,7 @@ export async function classificarAtendimento(atendimentoId: string): Promise<voi
       origemAtualId: atendimentos.origemId,
       justificativaAtual: atendimentos.classificacaoJustificativa,
       clienteNome: clientes.nome,
+      clienteTelefone: clientes.telefone,
       vendedorNome: vendedores.nome,
     })
     .from(atendimentos)
@@ -186,7 +190,23 @@ ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("
     confianca = 1;
     justificativa = `${(a.justificativaAtual ?? "").split(" | IA:")[0]} | IA: ${r.justificativa}`;
   }
-  const status = origemId && confianca >= env.AGENTE_CONFIANCA_MINIMA ? "classificado" : "revisar";
+  // O gerente usa o painel para ver dados, não para corrigir: "A revisar" fica só para falhas.
+  // - IA escolheu uma origem com pouca confiança → fica a escolha dela (a confiança aparece no detalhe)
+  // - Nenhuma evidência de origem → conta como contato direto
+  if (!origemFixa && origemId && confianca < env.AGENTE_CONFIANCA_MINIMA) {
+    justificativa = `Baixa confiança (${Math.round(confianca * 100)}%): ${justificativa}`;
+  }
+  let semEvidencia = false;
+  if (!origemId) {
+    const padrao = listaOrigens.find((o) => o.nome === ORIGEM_SEM_EVIDENCIA && !o.empresaId);
+    if (padrao) {
+      origemId = padrao.id;
+      semEvidencia = true;
+      justificativa = `Sem evidência de origem no resumo: considerado ${ORIGEM_SEM_EVIDENCIA}. IA: ${r.justificativa}`;
+    }
+  }
+  const status = origemId ? "classificado" : "revisar";
+  let gravou = false as boolean;
 
   await db.transaction(async (tx) => {
     // Só grava se ninguém mexeu enquanto o agente pensava (humano classificou ou chegou atribuição nova)
@@ -197,7 +217,7 @@ ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("
         classificacaoStatus: status,
         classificacaoConfianca: confianca,
         classificacaoJustificativa: justificativa,
-        classificacaoSugestao: origemId ? null : r.sugestao_nova_origem,
+        classificacaoSugestao: origemId && !semEvidencia ? null : r.sugestao_nova_origem,
         classificacaoErro: null,
         classificadoEm: new Date(),
         classificadoPorUsuarioId: null,
@@ -211,7 +231,23 @@ ${listaEtiquetas.map((e, i) => `E${i + 1} — ${e.nome}: ${e.descricao}`).join("
     if (etiquetaIds.length) {
       await tx.insert(atendimentoEtiquetas).values(etiquetaIds.map((etiquetaId) => ({ atendimentoId, etiquetaId })));
     }
+    gravou = true;
   });
+
+  if (gravou) {
+    const nomeOrigem = origemId ? (listaOrigens.find((o) => o.id === origemId)?.nome ?? "?") : "não identificada";
+    const nomesEtiquetas = etiquetaIds.map((id) => listaEtiquetas.find((e) => e.id === id)?.nome).filter(Boolean);
+    registrar(
+      "IA",
+      "Classificado",
+      a.empresaNome,
+      a.clienteNome,
+      contato(a.clienteTelefone),
+      `origem: ${nomeOrigem}${origemFixa ? " (regra)" : ` (confiança ${Math.round(confianca * 100)}%)`}`,
+      `etiquetas: ${nomesEtiquetas.join(", ") || "nenhuma"}`,
+      status === "revisar" ? "vai para A REVISAR" : semEvidencia ? "sem evidência → contato direto" : "ok",
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -247,7 +283,7 @@ async function processar(id: string): Promise<boolean> {
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`Agente falhou no atendimento ${id}:`, msg);
+    registrar("IA", "FALHOU", `atendimento ${id}`, msg);
     await db
       .update(atendimentos)
       .set({

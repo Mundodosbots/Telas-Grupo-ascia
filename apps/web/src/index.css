@@ -91,3 +91,51 @@ body {
 .recharts-legend-item-text {
   color: var(--ink-2) !important;
 }
+
+/* Relatório: a "folha" é sempre clara (é o que vai para o PDF), mesmo no tema escuro */
+.folha {
+  color-scheme: light;
+  --surface: #ffffff;
+  --surface-2: #f2f3f6;
+  --ink: #0f1424;
+  --ink-2: #3f4559;
+  --muted: #6b7084;
+  --line: #e2e4ec;
+  --grid: #e8e9ee;
+  --accent: #2a78d6;
+  background: var(--surface);
+  color: var(--ink);
+}
+.folha table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.folha tr {
+  break-inside: avoid;
+}
+.folha thead {
+  display: table-header-group; /* repete o cabeçalho da tabela em cada página */
+}
+
+@page {
+  size: A4;
+  margin: 14mm 12mm;
+}
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    background: #fff !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .folha {
+    box-shadow: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+}

@@ -37,8 +37,47 @@ async function etiquetasDe(ids: string[]) {
   return mapa;
 }
 
+/** Máximo de linhas na lista detalhada do relatório / planilha */
+const LIMITE_RELATORIO = 5000;
+
 export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   .use(protegido())
+  /** Lista completa (sem paginação e sem o resumo) para relatórios e planilha */
+  .get("/relatorio", async ({ query }) => {
+    const onde = and(...condicoesAtendimentos(query as FiltroAtendimentos));
+    const [{ total }] = (await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(atendimentos)
+      .where(onde)) as [{ total: number }];
+    const itens = await db
+      .select({
+        id: atendimentos.id,
+        empresaNome: empresas.nome,
+        clienteNome: clientes.nome,
+        clienteTelefone: clientes.telefone,
+        vendedorNome: vendedores.nome,
+        origemNome: origens.nome,
+        totalAtribuicoes: atendimentos.totalAtribuicoes,
+        primeiraAtribuicaoEm: atendimentos.primeiraAtribuicaoEm,
+        ultimaAtribuicaoEm: atendimentos.ultimaAtribuicaoEm,
+        status: atendimentos.classificacaoStatus,
+        etiquetasPlataforma: atendimentos.etiquetasPlataforma,
+      })
+      .from(atendimentos)
+      .innerJoin(empresas, eq(empresas.id, atendimentos.empresaId))
+      .innerJoin(clientes, eq(clientes.id, atendimentos.clienteId))
+      .innerJoin(vendedores, eq(vendedores.id, atendimentos.vendedorAtualId))
+      .leftJoin(origens, eq(origens.id, atendimentos.origemId))
+      .where(onde)
+      .orderBy(desc(atendimentos.ultimaAtribuicaoEm))
+      .limit(LIMITE_RELATORIO);
+    const tags = await etiquetasDe(itens.map((i) => i.id));
+    return {
+      total,
+      limite: LIMITE_RELATORIO,
+      itens: itens.map((i) => ({ ...i, etiquetas: (tags.get(i.id) ?? []).map((e) => e.nome) })),
+    };
+  })
   .get("/", async ({ query }) => {
     const filtro = query as FiltroAtendimentos & { pagina?: string; por_pagina?: string };
     const porPagina = Math.min(100, Math.max(1, Number(filtro.por_pagina) || 25));

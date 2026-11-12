@@ -2,6 +2,7 @@ import {
   BarChart3,
   Building2,
   ClipboardCheck,
+  FileText,
   GitBranch,
   KeyRound,
   ListChecks,
@@ -16,7 +17,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useAuth } from "../auth";
-import { useStatus } from "../hooks";
+import { useAtualizacaoAutomatica, useStatus } from "../hooks";
 import { cx } from "./ui";
 
 type Item = { para: string; rotulo: string; Icone: typeof BarChart3; master?: boolean; contador?: "revisar" };
@@ -27,6 +28,7 @@ const SECOES: { titulo?: string; itens: Item[] }[] = [
       { para: "/", rotulo: "Painel", Icone: BarChart3 },
       { para: "/atendimentos", rotulo: "Atendimentos", Icone: ListChecks },
       { para: "/revisar", rotulo: "A revisar", Icone: ClipboardCheck, contador: "revisar" },
+      { para: "/relatorios", rotulo: "Relatórios", Icone: FileText },
     ],
   },
   {
@@ -52,6 +54,7 @@ const SECOES: { titulo?: string; itens: Item[] }[] = [
 export function Layout() {
   const { usuario, sair } = useAuth();
   const status = useStatus();
+  useAtualizacaoAutomatica();
   const [menuAberto, setMenuAberto] = useState(false);
 
   const nav = (
@@ -101,7 +104,7 @@ export function Layout() {
   return (
     <div className="flex min-h-full">
       {/* Lateral fixa no desktop */}
-      <aside className="hidden lg:flex w-60 shrink-0 flex-col gap-6 border-r border-line bg-surface px-3 py-4 sticky top-0 h-screen">
+      <aside className="hidden lg:flex print:hidden w-60 shrink-0 flex-col gap-6 border-r border-line bg-surface px-3 py-4 sticky top-0 h-screen">
         <Marca />
         <div className="flex-1 overflow-y-auto">{nav}</div>
         {rodape}
@@ -119,18 +122,18 @@ export function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="lg:hidden sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-surface px-4 h-14">
+        <header className="lg:hidden print:hidden sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-surface px-4 h-14">
           <button onClick={() => setMenuAberto(true)} className="rounded-lg p-1.5 hover:bg-surface-2 cursor-pointer" aria-label="Abrir menu">
             <Menu className="size-5" />
           </button>
           <Marca />
         </header>
         {status.data && !status.data.agenteAtivo && (
-          <div className="border-b border-line bg-warn-soft px-4 lg:px-8 py-2 text-sm text-warn">
+          <div className="print:hidden border-b border-line bg-warn-soft px-4 lg:px-8 py-2 text-sm text-warn">
             A classificação automática por IA está desligada (falta a chave da OpenAI). Os atendimentos entram normalmente e podem ser classificados à mão.
           </div>
         )}
-        <main className="flex-1 px-4 py-5 lg:px-8 lg:py-7">
+        <main className="flex-1 px-4 py-5 lg:px-8 lg:py-7 print:p-0">
           <Outlet />
         </main>
       </div>

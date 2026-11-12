@@ -1,9 +1,9 @@
 import { Elysia } from "elysia";
 import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "./db/client";
-import { atendimentos } from "./db/schema";
+import { atendimentos, origens } from "./db/schema";
 import { semear } from "./db/seed";
 import { env } from "./env";
 import { rotasAtendimentos } from "./routes/atendimentos";
@@ -16,7 +16,7 @@ import { reaplicarRegras, rotasDicionario, rotasRegras } from "./routes/regras";
 import { rotasUsuarios } from "./routes/usuarios";
 import { rotasVendedores } from "./routes/vendedores";
 import { rotasWebhook } from "./routes/webhook";
-import { iniciarAgente, pararAgente } from "./services/classificador";
+import { iniciarAgente, ORIGEM_SEM_EVIDENCIA, pararAgente } from "./services/classificador";
 
 // Migrações + dados iniciais (idempotente: só cria o que falta)
 await semear();
@@ -84,6 +84,27 @@ const [{ pendentes }] = (await db
   { pendentes: number },
 ];
 if (pendentes) console.log("Etiquetas sem nome reavaliadas:", await reaplicarRegras());
+
+// "A revisar" fica só para falhas: o que a IA tinha deixado em dúvida passa a valer como classificado
+// (sem origem → contato direto). Roda a cada início, mas só mexe em quem ainda está em "revisar".
+const [padrao] = await db
+  .select({ id: origens.id })
+  .from(origens)
+  .where(and(eq(origens.nome, ORIGEM_SEM_EVIDENCIA), isNull(origens.empresaId)));
+if (padrao) {
+  const movidos = await db
+    .update(atendimentos)
+    .set({
+      origemId: sql`coalesce(${atendimentos.origemId}, ${padrao.id}::uuid)`,
+      classificacaoStatus: "classificado",
+      classificacaoJustificativa: sql`case when ${atendimentos.origemId} is null
+        then ${`Sem evidência de origem no resumo: considerado ${ORIGEM_SEM_EVIDENCIA}. `} || coalesce(${atendimentos.classificacaoJustificativa}, '')
+        else ${atendimentos.classificacaoJustificativa} end`,
+    })
+    .where(eq(atendimentos.classificacaoStatus, "revisar"))
+    .returning({ id: atendimentos.id });
+  if (movidos.length) console.log(`Saíram de "A revisar" pela regra nova: ${movidos.length}`);
+}
 
 console.log(`Painel rodando em http://localhost:${app.server?.port}`);
 

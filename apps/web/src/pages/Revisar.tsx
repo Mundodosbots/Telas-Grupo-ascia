@@ -28,7 +28,7 @@ export function PaginaRevisar() {
     <>
       <Titulo
         titulo="A revisar"
-        descricao="Atendimentos em que a IA não encontrou a origem ou ficou em dúvida. Ao confirmar, o atendimento sai desta lista."
+        descricao="Atendimentos que a classificação automática não conseguiu processar. Quando a IA não acha pista de origem, o atendimento conta como contato direto e não vem para cá."
         acoes={
           temErros && (
             <Botao onClick={() => reprocessar.mutate()} carregando={reprocessar.isPending}>
