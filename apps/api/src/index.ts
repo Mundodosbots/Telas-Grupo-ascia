@@ -76,14 +76,18 @@ const app = new Elysia()
 
 await iniciarAgente();
 
-// Atendimentos que chegaram com etiquetas só em número (#ID) ganham o nome e as regras de novo
+// Reaplica as regras quando há atendimentos que ainda não passaram por elas:
+// etiquetas que chegaram só em número (#ID) ou clique em anúncio (ADS_CLICKED) sem regra aplicada
 const [{ pendentes }] = (await db
   .select({ pendentes: sql<number>`count(*)::int` })
   .from(atendimentos)
-  .where(sql`${atendimentos.classificacaoStatus} <> 'manual' and exists (select 1 from unnest(${atendimentos.etiquetasPlataforma}) e where e like '#%')`)) as [
-  { pendentes: number },
-];
-if (pendentes) console.log("Etiquetas sem nome reavaliadas:", await reaplicarRegras());
+  .where(
+    sql`${atendimentos.classificacaoStatus} <> 'manual' and (
+      exists (select 1 from unnest(${atendimentos.etiquetasPlataforma}) e where e like '#%')
+      or (${atendimentos.origemRegraId} is null and ${atendimentos.resumo} ilike '%ads_clicked%')
+    )`,
+  )) as [{ pendentes: number }];
+if (pendentes) console.log("Regras reaplicadas ao iniciar:", await reaplicarRegras());
 
 // "A revisar" fica só para falhas: o que a IA tinha deixado em dúvida passa a valer como classificado
 // (sem origem → contato direto). Roda a cada início, mas só mexe em quem ainda está em "revisar".

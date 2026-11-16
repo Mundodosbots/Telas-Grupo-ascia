@@ -123,6 +123,8 @@ export async function semear() {
     const grow = await origemGlobal("RPA Grow");
     const meta = await origemGlobal("Anúncio Meta (Instagram/Facebook)");
     if (grow) await db.insert(regrasOrigem).values({ campo: "etiqueta", comparacao: "igual", valor: "Grow", origemId: grow, prioridade: 10 });
+    // Clique em anúncio registrado nos metadados = tráfego pago da Meta (mesma regra da migração 0003)
+    if (meta) await db.insert(regrasOrigem).values({ campo: "resumo", comparacao: "contem", valor: "ADS_CLICKED", origemId: meta, prioridade: 15 });
     if (meta) await db.insert(regrasOrigem).values({ campo: "fonte", comparacao: "igual", valor: "ads", origemId: meta, prioridade: 20 });
   }
 

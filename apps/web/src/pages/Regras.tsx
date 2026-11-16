@@ -70,8 +70,8 @@ export function PaginaRegras() {
                 <span className="w-6 text-center text-xs font-semibold text-muted tabular">{i + 1}º</span>
                 <div className="min-w-0 flex-1 text-sm">
                   <p className="flex flex-wrap items-center gap-1.5">
-                    Se a <b>{r.campo === "fonte" ? "fonte do contato" : "etiqueta da plataforma"}</b>
-                    {r.comparacao === "contem" ? " contém " : " for "}
+                    Se {r.campo === "resumo" ? "o" : "a"} <b>{r.campo === "fonte" ? "fonte do contato" : r.campo === "resumo" ? "resumo" : "etiqueta da plataforma"}</b>
+                    {r.comparacao === "contem" || r.campo === "resumo" ? " contém " : " for "}
                     <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">{r.valor}</code>→<Chip cor={r.origemCor}>{r.origemNome}</Chip>
                     {!r.ativo && <span className="text-xs text-muted">(desativada)</span>}
                   </p>
@@ -131,7 +131,7 @@ function FormRegra({ regra, onFechar }: { regra: Regra | null; onFechar: () => v
   };
   const salvar = useMutation({
     mutationFn: () => {
-      const body = { campo, comparacao, valor, origem_id: origemId, empresa_id: empresaId || null, ...(regra && { ativo }) };
+      const body = { campo, comparacao: campo === "resumo" ? "contem" : comparacao, valor, origem_id: origemId, empresa_id: empresaId || null, ...(regra && { ativo }) };
       return regra ? api(`/regras/${regra.id}`, { method: "PATCH", body }) : api("/regras", { method: "POST", body });
     },
     onSuccess: fim,
@@ -158,20 +158,27 @@ function FormRegra({ regra, onFechar }: { regra: Regra | null; onFechar: () => v
           <Selecao id="regra-campo" rotulo="Quando" value={campo} onChange={(e) => setCampo(e.target.value as Regra["campo"])}>
             <option value="etiqueta">a etiqueta da plataforma</option>
             <option value="fonte">a fonte do contato</option>
+            <option value="resumo">o texto do resumo</option>
           </Selecao>
-          <Selecao id="regra-comparacao" rotulo="Comparação" value={comparacao} onChange={(e) => setComparacao(e.target.value as Regra["comparacao"])}>
+          <Selecao
+            id="regra-comparacao"
+            rotulo="Comparação"
+            value={campo === "resumo" ? "contem" : comparacao}
+            disabled={campo === "resumo"}
+            onChange={(e) => setComparacao(e.target.value as Regra["comparacao"])}
+          >
             <option value="igual">for igual a</option>
             <option value="contem">contiver</option>
           </Selecao>
         </div>
         <Campo
           id="regra-valor"
-          rotulo={campo === "etiqueta" ? "Nome da etiqueta" : "Texto da fonte"}
+          rotulo={campo === "etiqueta" ? "Nome da etiqueta" : campo === "resumo" ? "Trecho procurado no resumo" : "Texto da fonte"}
           required
           list="regra-sugestoes"
           value={valor}
           onChange={(e) => setValor(e.target.value)}
-          placeholder={campo === "etiqueta" ? "Grow" : "API"}
+          placeholder={campo === "etiqueta" ? "Grow" : campo === "resumo" ? "ADS_CLICKED" : "API"}
           ajuda="Sem diferença entre maiúsculas, minúsculas e acentos."
         />
         <datalist id="regra-sugestoes">

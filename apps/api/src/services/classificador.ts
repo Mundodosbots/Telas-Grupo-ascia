@@ -52,6 +52,10 @@ Sua tarefa:
      "API" = entrou por integração com outro sistema (ex.: RPA Grow — confirme pelas etiquetas e pelo resumo);
      "mensagem aberta" = o cliente chamou direto, sem anúncio — use o resumo para ver se foi indicação, site, portal, cliente antigo etc.
    - Origens marcadas [EXCLUSIVA DESTA EMPRESA] são mais específicas: quando se encaixarem, prefira-as às genéricas.
+   - CLIQUE EM ANÚNCIO NOS METADADOS (ex.: evento "ADS_CLICKED", "ctwa", "referral" de anúncio, ID de anúncio, "clicou no anúncio"
+     registrado pelo sistema) = tráfego pago do Instagram/Facebook → use a origem "Anúncio Meta (Instagram/Facebook)",
+     mesmo que o anúncio seja de outra marca do grupo ou de outro produto, e mesmo que o resumo diga que a relação não foi esclarecida.
+     "Campanha de marketing" é só para disparo em massa, e-mail, promoção ou feirão — nunca para anúncio pago clicado.
    - Cliente que menciona um anúncio sem dizer onde viu: use uma origem de anúncio genérica, se existir, com confiança moderada.
    - Se nenhuma origem da lista se encaixar ou o texto não der pistas, responda "${NENHUMA}".
 2. ETIQUETAS: escolha zero ou mais etiquetas da lista que descrevam o atendimento (interesse, perfil, situação). Só use etiquetas com evidência no texto.

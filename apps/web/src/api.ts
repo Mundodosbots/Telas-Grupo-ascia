@@ -116,7 +116,7 @@ export type Regra = {
   id: string;
   empresaId: string | null;
   empresaNome: string | null;
-  campo: "etiqueta" | "fonte";
+  campo: "etiqueta" | "fonte" | "resumo";
   comparacao: "igual" | "contem";
   valor: string;
   origemId: string;

@@ -197,8 +197,14 @@ async function obterCliente(tx: Tx, empresaId: string, d: DadosAtribuicao) {
 
 export type RegraAplicada = { id: string; origemId: string; descricao: string };
 
-/** Primeira regra ativa (por prioridade) que bate com as etiquetas ou a fonte */
-export async function aplicarRegras(tx: Tx | typeof db, empresaId: string, etiquetas: string[], fonte?: string): Promise<RegraAplicada | null> {
+/** Primeira regra ativa (por prioridade) que bate com as etiquetas, a fonte ou o texto do resumo */
+export async function aplicarRegras(
+  tx: Tx | typeof db,
+  empresaId: string,
+  etiquetas: string[],
+  fonte?: string,
+  resumo?: string,
+): Promise<RegraAplicada | null> {
   const regras = await tx
     .select({ r: regrasOrigem, origemNome: origens.nome })
     .from(regrasOrigem)
@@ -209,12 +215,18 @@ export async function aplicarRegras(tx: Tx | typeof db, empresaId: string, etiqu
   // Etiqueta sem nome chega como "#706325": a regra também pode ser escrita com o número
   const etqs = etiquetas.flatMap((e) => (e.startsWith("#") ? [normalizarNome(e), normalizarNome(e.slice(1))] : [normalizarNome(e)]));
   const fonteN = fonte ? normalizarNome(fonte) : "";
+  let resumoN: string | null = null; // só normaliza o resumo (longo) se houver regra de resumo
   for (const { r, origemNome } of regras) {
     const v = normalizarNome(r.valor);
     if (!v) continue;
     const bate = (x: string) => (r.comparacao === "contem" ? x.includes(v) : x === v);
-    const ok = r.campo === "fonte" ? !!fonteN && bate(fonteN) : etqs.some(bate);
+    let ok: boolean;
+    if (r.campo === "fonte") ok = !!fonteN && bate(fonteN);
+    // Resumo é texto longo: a regra sempre procura o trecho dentro dele (ex.: ADS_CLICKED)
+    else if (r.campo === "resumo") ok = !!resumo && (resumoN ??= normalizarNome(resumo)).includes(v);
+    else ok = etqs.some(bate);
     if (ok) {
+      if (r.campo === "resumo") return { id: r.id, origemId: r.origemId, descricao: `Regra: resumo contém "${r.valor}" → ${origemNome}` };
       const onde = r.campo === "fonte" ? "fonte do contato" : "etiqueta";
       return { id: r.id, origemId: r.origemId, descricao: `Regra: ${onde} ${r.comparacao === "contem" ? "contém" : "="} "${r.valor}" → ${origemNome}` };
     }
@@ -292,7 +304,7 @@ export async function ingerirAtribuicao(empresa: Empresa, payload: unknown): Pro
 
       const vendedor = await obterVendedor(tx, empresa.id, dados);
       const cliente = await obterCliente(tx, empresa.id, dados);
-      const regra = await aplicarRegras(tx, empresa.id, dados.etiquetas, dados.fonte);
+      const regra = await aplicarRegras(tx, empresa.id, dados.etiquetas, dados.fonte, dados.resumo);
 
       const [evento] = await tx
         .insert(webhookEventos)

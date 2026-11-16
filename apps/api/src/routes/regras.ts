@@ -9,7 +9,7 @@ import { aplicarRegras } from "../services/ingestao";
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
 const corpoRegra = {
   empresa_id: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
-  campo: t.Union([t.Literal("etiqueta"), t.Literal("fonte")]),
+  campo: t.Union([t.Literal("etiqueta"), t.Literal("fonte"), t.Literal("resumo")]),
   comparacao: t.Union([t.Literal("igual"), t.Literal("contem")]),
   valor: t.String({ minLength: 1, maxLength: 200 }),
   origem_id: t.String({ format: "uuid" }),
@@ -27,6 +27,7 @@ export async function reaplicarRegras(empresaId?: string) {
       empresaId: atendimentos.empresaId,
       etiquetas: atendimentos.etiquetasPlataforma,
       fonte: atendimentos.fonteInformada,
+      resumo: atendimentos.resumo,
       origemId: atendimentos.origemId,
       origemRegraId: atendimentos.origemRegraId,
     })
@@ -42,7 +43,7 @@ export async function reaplicarRegras(empresaId?: string) {
     }
     const dic = dicionarios.get(a.empresaId)!;
     const etiquetas = a.etiquetas.map((e) => (e.startsWith("#") ? (dic.get(e.slice(1)) ?? e) : e));
-    const regra = await aplicarRegras(db, a.empresaId, etiquetas, a.fonte ?? undefined);
+    const regra = await aplicarRegras(db, a.empresaId, etiquetas, a.fonte ?? undefined, a.resumo);
     const mudouEtiquetas = etiquetas.join("|") !== a.etiquetas.join("|");
 
     if (regra && (regra.id !== a.origemRegraId || regra.origemId !== a.origemId)) {
