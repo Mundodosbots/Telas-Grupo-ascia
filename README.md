@@ -32,7 +32,7 @@ Chatbot ──POST /api/webhook/atribuicao (token da empresa)──► API (Bun 
 
 ## Formato da plataforma (Mundo dos Bots)
 
-O webhook reconhece sozinho o JSON da plataforma, que é o **contato inteiro** (`id`, `full_name`, `phone`, `tags: [{id}]`, `custom_fields: [{name, value}]`). Basta configurar o disparo para `POST /api/webhook/atribuicao?token=<token da empresa>`, sem montar JSON próprio.
+O webhook reconhece sozinho o JSON da plataforma, que é o **contato inteiro** (`id`, `full_name`, `phone`, `tags: [{id}]`, `custom_fields: [{name, value}]`). Basta configurar o disparo como `POST /api/webhook` com o cabeçalho `Authorization: Bearer <token do chatbot>`, sem montar JSON próprio. O token nunca vai na URL. O passo a passo completo está no painel, em **Como configurar**.
 
 | Dado no painel | De onde vem |
 |---|---|
@@ -71,7 +71,7 @@ Content-Type: application/json
 Exemplo:
 
 ```bash
-curl -X POST https://atendly.mundodosbots.com.br/api/webhook/atribuicao \
+curl -X POST https://atendly.mundodosbots.com.br/api/webhook \
   -H "Authorization: Bearer whk_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -125,7 +125,7 @@ docker push mundodosbots/ascia-screen --all-tags
 | `IMAGE_TAG` | não | Versão da imagem (padrão `latest`); use o hash do commit para poder voltar atrás |
 | `POSTGRES_HOST` / `POSTGRES_USER` / `POSTGRES_DB` | não | Padrões: `mb_postgres`, `mbuser`, `ascia_screen` |
 
-**4. Primeiro acesso:** entre com o master, vá em **Empresas e webhook** e gere o token de cada empresa. A URL do webhook para o chatbot é `https://atendly.mundodosbots.com.br/api/webhook/atribuicao`.
+**4. Primeiro acesso:** entre com o master, crie a empresa e, em **Chatbots**, gere o token de cada chatbot. A URL é `https://atendly.mundodosbots.com.br/api/webhook` e o token vai no cabeçalho `Authorization: Bearer <token>`.
 
 **Atualizar:** publique a imagem nova (passo 1) e, no Portainer, abra o serviço e clique em *Update* com *Re-pull image* (ou troque o `IMAGE_TAG`). A atualização é `start-first` com rollback automático se o container novo não subir; as migrações do banco rodam sozinhas.
 

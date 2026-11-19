@@ -8,7 +8,8 @@ import { acordarOrganizador } from "../services/organizador";
 import { EnvioInvalido, ingerirEnvio } from "../services/ingestao";
 
 /**
- * Token do chatbot: ?token= na URL (o jeito da plataforma), header Authorization: Bearer ou X-Webhook-Token.
+ * Token do chatbot: cabeçalho Authorization: Bearer <token> (o jeito documentado) ou X-Webhook-Token.
+ * ?token= na URL ainda é aceito só para não quebrar fluxos antigos.
  */
 function extrairToken(headers: Record<string, string | undefined>, query: Record<string, string | undefined>): string | null {
   const auth = headers["authorization"];
@@ -87,7 +88,7 @@ async function receber({ request, headers, query, set }: { request: Request; hea
     registrar("WEBHOOK", `RECUSADO: ${motivo}`, conta, p.full_name, fmtContato(p.phone), `${bruto.length} bytes`);
     await guardarRecusa(null, `Recusado: ${motivo}`, body, bruto);
     set.status = 401;
-    return { ok: false, erro: token ? "Token inválido" : "Envie o token na URL (?token=...)" };
+    return { ok: false, erro: token ? "Token inválido" : "Envie o token no cabeçalho Authorization: Bearer <token do chatbot>" };
   }
   const { chatbot, empresaNome } = achado;
   const dono = { empresaId: chatbot.empresaId, chatbotId: chatbot.id };
@@ -150,7 +151,7 @@ export const rotasWebhook = new Elysia({ prefix: "/api/webhook" })
       const achado = await chatbotDoToken(extrairToken(headers, query));
       if (!achado) {
         set.status = 401;
-        return { ok: false, erro: "Token ausente ou inválido. Use ?token=<token do chatbot> na URL." };
+        return { ok: false, erro: "Token ausente ou inválido. Envie o cabeçalho Authorization: Bearer <token do chatbot>." };
       }
       const bruto = await request.text();
       const lido = lerJsonTolerante(bruto);

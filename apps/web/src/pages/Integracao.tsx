@@ -50,7 +50,16 @@ const EXEMPLO = `{
 }`;
 
 const PROBLEMAS: { sintoma: string; solucao: ReactNode }[] = [
-  { sintoma: "Resposta 401 “Token inválido”", solucao: <>O link está errado ou foi trocado. Gere de novo em <b>Chatbots</b> e cole a URL inteira, sem espaços.</> },
+  {
+    sintoma: "Resposta 401 “Token inválido”",
+    solucao: (
+      <>
+        O cabeçalho <code>Authorization</code> está errado ou o token foi trocado. O valor tem que ser <code>Bearer whk_…</code>, com a palavra Bearer, um espaço e o token inteiro. Se perdeu o token, gere outro em{" "}
+        <b>Chatbots</b>.
+      </>
+    ),
+  },
+  { sintoma: "Resposta 401 “Envie o token no cabeçalho”", solucao: <>Faltou o cabeçalho <code>Authorization</code> no External Request (aba Cabeçalhos).</> },
   { sintoma: "Resposta 400 “JSON inválido”", solucao: <>O corpo não é um JSON válido. Envie os dados completos do contato, sem montar o JSON à mão.</> },
   { sintoma: "Resposta 422 “Faltou o id do contato”", solucao: <>O corpo não é o contato da plataforma. Mande o contato completo, com <code>id</code> e <code>custom_fields</code>.</> },
   { sintoma: "Chegou, mas sem tempos nem conversa", solucao: <>Os campos <b>Historico Conversa</b> e <b>Historico 50</b> estão vazios. Confira se o fluxo preenche os dois antes do External Request.</> },
@@ -66,13 +75,15 @@ export function PaginaIntegracao() {
       <Titulo titulo="Como configurar" descricao="Passo a passo para ligar um chatbot da plataforma ao painel. Leva uns 10 minutos por chatbot." />
 
       <div className="grid max-w-4xl gap-5">
-        <Passo n={1} titulo="Gere o link do chatbot">
+        <Passo n={1} titulo="Gere o token do chatbot">
           <p>
             Em <Link to="/chatbots" className="font-medium text-accent hover:underline">Chatbots</Link>, cadastre um chatbot para cada conta da plataforma (ex.: Asia Fiat, Asia Leap) e
-            clique em <b>Gerar link</b>. Copie na hora: por segurança, o link completo só aparece uma vez.
+            clique em <b>Gerar token</b>. Copie na hora: por segurança, o token só aparece uma vez.
           </p>
-          <p>O link tem este formato:</p>
-          <Codigo texto={`${origem}/api/webhook?token=whk_...`} copiar={false} />
+          <p>
+            O endereço é o mesmo para todos os chatbots. O que diferencia um do outro é o token, que vai no <b>cabeçalho</b> da requisição, nunca na URL.
+          </p>
+          <Codigo texto={`${origem}/api/webhook`} />
           {!!chatbots.data?.length && (
             <ul className="grid gap-1.5 rounded-lg border border-line p-3">
               {chatbots.data.map((c) => {
@@ -84,9 +95,9 @@ export function PaginaIntegracao() {
                     {estado === "ok" ? (
                       <span className="flex items-center gap-1 text-good"><CheckCircle2 className="size-4" /> recebendo envios</span>
                     ) : estado === "aguardando" ? (
-                      <span className="flex items-center gap-1 text-muted"><CircleDashed className="size-4" /> link gerado, aguardando o 1º envio</span>
+                      <span className="flex items-center gap-1 text-muted"><CircleDashed className="size-4" /> token gerado, aguardando o 1º envio</span>
                     ) : (
-                      <span className="flex items-center gap-1 text-warn"><CircleAlert className="size-4" /> falta gerar o link</span>
+                      <span className="flex items-center gap-1 text-warn"><CircleAlert className="size-4" /> falta gerar o token</span>
                     )}
                   </li>
                 );
@@ -120,9 +131,12 @@ export function PaginaIntegracao() {
                 <dt className="text-muted">Request Type</dt>
                 <dd><code>POST</code></dd>
                 <dt className="text-muted">Request URL</dt>
-                <dd>o link do passo 1</dd>
-                <dt className="text-muted">Cabeçalho</dt>
-                <dd><code>Content-Type</code> = <code>application/json</code></dd>
+                <dd className="break-all"><code>{origem}/api/webhook</code></dd>
+                <dt className="text-muted">Cabeçalhos</dt>
+                <dd className="grid gap-1">
+                  <span><code>Authorization</code> = <code>Bearer whk_…</code> (o token do passo 1, com a palavra Bearer e um espaço antes)</span>
+                  <span><code>Content-Type</code> = <code>application/json</code></span>
+                </dd>
                 <dt className="text-muted">Corpo</dt>
                 <dd>os dados completos do contato (com os campos personalizados e as etiquetas)</dd>
               </dl>

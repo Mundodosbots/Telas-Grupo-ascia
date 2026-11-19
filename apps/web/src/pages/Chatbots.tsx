@@ -5,22 +5,22 @@ import { Link } from "react-router";
 import { api, type Chatbot, type Horario } from "../api";
 import { ehAdmin, useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
-import { Alerta, Botao, BotaoCopiar, Campo, Cartao, Carregando, Modal, Ponto, SeletorCor, Vazio } from "../components/ui";
+import { Alerta, Botao, BotaoCopiar, Campo, Cartao, Carregando, cx, Modal, Ponto, SeletorCor, Vazio } from "../components/ui";
 import { useChatbots } from "../hooks";
 import { dataHora, numero, PALETA } from "../lib/formato";
 
 const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
-const urlWebhook = (token: string) => `${window.location.origin}/api/webhook?token=${token}`;
+export const urlWebhook = () => `${window.location.origin}/api/webhook`;
 
 export function PaginaChatbots() {
   const { usuario } = useAuth();
   const chatbots = useChatbots();
   const [editando, setEditando] = useState<Chatbot | "novo" | null>(null);
-  const [link, setLink] = useState<{ nome: string; url: string } | null>(null);
+  const [link, setLink] = useState<{ nome: string; token: string } | null>(null);
   const qc = useQueryClient();
   const pode = ehAdmin(usuario);
   const gerar = useMutation({
-    mutationFn: (c: Chatbot) => api<{ token: string }>(`/chatbots/${c.id}/token`, { method: "POST" }).then((r) => ({ nome: c.nome, url: urlWebhook(r.token) })),
+    mutationFn: (c: Chatbot) => api<{ token: string }>(`/chatbots/${c.id}/token`, { method: "POST" }).then((r) => ({ nome: c.nome, token: r.token })),
     onSuccess: (r) => {
       setLink(r);
       qc.invalidateQueries({ queryKey: ["chatbots"] });
@@ -31,7 +31,7 @@ export function PaginaChatbots() {
     <>
       <Titulo
         titulo="Chatbots"
-        descricao="Cada conta/bot da plataforma tem seu próprio link. No fim do atendimento, o fluxo manda o contato completo para esse link (External Request, POST, JSON)."
+        descricao="Cada conta/bot da plataforma tem seu próprio token. No fim do atendimento, o fluxo manda o contato completo para o painel (External Request POST, com o token no cabeçalho Authorization)."
         acoes={
           pode && (
             <Botao variante="primario" onClick={() => setEditando("novo")}>
@@ -56,7 +56,7 @@ export function PaginaChatbots() {
                     {c.nome} {!c.ativo && <span className="text-xs font-normal text-muted">(desativado)</span>}
                   </p>
                   <p className="text-xs text-muted">
-                    {c.tokenPrefixo ? `Link gerado em ${dataHora(c.tokenGeradoEm)}` : <span className="text-warn">Sem link: gere o link para começar a receber</span>}
+                    {c.tokenPrefixo ? `Token gerado em ${dataHora(c.tokenGeradoEm)}` : <span className="text-warn">Sem token: gere o token para começar a receber</span>}
                     {c.contaExterna && ` · conta ${c.contaExterna}`}
                     {" · "}
                     {c.fuso}
@@ -74,10 +74,10 @@ export function PaginaChatbots() {
                     <Botao
                       carregando={gerar.isPending && gerar.variables?.id === c.id}
                       onClick={() => {
-                        if (!c.tokenPrefixo || confirm(`Gerar um link novo para "${c.nome}"? O link atual para de funcionar e é preciso trocar no fluxo da plataforma.`)) gerar.mutate(c);
+                        if (!c.tokenPrefixo || confirm(`Gerar um token novo para "${c.nome}"? O token atual para de funcionar e é preciso trocar no cabeçalho do fluxo da plataforma.`)) gerar.mutate(c);
                       }}
                     >
-                      <KeyRound className="size-4" /> {c.tokenPrefixo ? "Trocar link" : "Gerar link"}
+                      <KeyRound className="size-4" /> {c.tokenPrefixo ? "Trocar token" : "Gerar token"}
                     </Botao>
                   </div>
                 )}
@@ -100,15 +100,24 @@ export function PaginaChatbots() {
       </Cartao>
 
       {link && (
-        <Modal titulo={`Link de ${link.nome}`} aberto onFechar={() => setLink(null)}>
-          <div className="grid gap-3">
-            <Alerta tipo="aviso">Copie agora: por segurança, o link completo só aparece esta vez. Se perder, gere outro.</Alerta>
-            <code className="break-all rounded-md bg-surface-2 p-3 text-xs">{link.url}</code>
-            <div className="flex flex-wrap items-center justify-end gap-3">
+        <Modal titulo={`Conexão de ${link.nome}`} aberto onFechar={() => setLink(null)} largura="max-w-xl">
+          <div className="grid gap-4">
+            <Alerta tipo="aviso">Copie agora: por segurança, o token só aparece esta vez. Se perder, gere outro.</Alerta>
+            <ValorCopiavel rotulo="Request Type" valor="POST" />
+            <ValorCopiavel rotulo="Request URL" valor={urlWebhook()} />
+            <div className="grid gap-2">
+              <p className="text-xs font-medium text-ink-2">Cabeçalhos</p>
+              <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,1fr)]">
+                <ValorCopiavel valor="Authorization" curto />
+                <ValorCopiavel valor={`Bearer ${link.token}`} />
+                <ValorCopiavel valor="Content-Type" curto />
+                <ValorCopiavel valor="application/json" />
+              </div>
+            </div>
+            <div className="flex justify-end">
               <Link to="/como-configurar" className="text-sm font-medium text-accent hover:underline">
-                Como usar este link
+                Ver o passo a passo completo
               </Link>
-              <BotaoCopiar texto={link.url} rotulo="Copiar link" />
             </div>
           </div>
         </Modal>
@@ -118,7 +127,19 @@ export function PaginaChatbots() {
   );
 }
 
-const textoDoDia = (h: Horario, dia: number) => (h[String(dia)] ?? []).map(([a, b]) => `${a}-${b}`).join(", ");
+function ValorCopiavel({ rotulo, valor, curto }: { rotulo?: string; valor: string; curto?: boolean }) {
+  return (
+    <div className="grid gap-1">
+      {rotulo && <p className="text-xs font-medium text-ink-2">{rotulo}</p>}
+      <div className="flex min-w-0 items-center gap-2 rounded-md bg-surface-2 py-1 pl-3 pr-1">
+        <code className={cx("min-w-0 flex-1 text-xs", curto ? "whitespace-nowrap" : "break-all")}>{valor}</code>
+        <BotaoCopiar texto={valor} />
+      </div>
+    </div>
+  );
+}
+
+const textoDoDia =(h: Horario, dia: number) => (h[String(dia)] ?? []).map(([a, b]) => `${a}-${b}`).join(", ");
 function lerHorario(textos: string[]): Horario | string {
   const h: Horario = {};
   for (const [dia, t] of textos.entries()) {
