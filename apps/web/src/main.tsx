@@ -15,6 +15,7 @@ import { PaginaConta } from "./pages/Conta";
 import { PaginaDashboard } from "./pages/Dashboard";
 import { PaginaEmpresas } from "./pages/Empresas";
 import { PaginaEventos } from "./pages/Eventos";
+import { PaginaIntegracao } from "./pages/Integracao";
 import { PaginaLogin } from "./pages/Login";
 import { PaginaRegras } from "./pages/Regras";
 import { PaginaRelatorios } from "./pages/Relatorios";
@@ -47,6 +48,7 @@ function App() {
             <Route path="atendimentos/:id" element={<PaginaAtendimento />} />
             <Route path="relatorios" element={<PaginaRelatorios />} />
             <Route path="chatbots" element={<PaginaChatbots />} />
+            <Route path="como-configurar" element={<PaginaIntegracao />} />
             <Route path="departamentos" element={<PaginaCadastro tipo="departamentos" />} />
             <Route path="origens" element={<PaginaCadastro tipo="origens" />} />
             <Route path="etiquetas" element={<PaginaCadastro tipo="etiquetas" />} />

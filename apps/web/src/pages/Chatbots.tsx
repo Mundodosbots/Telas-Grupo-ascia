@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Pencil, Plus } from "lucide-react";
+import { KeyRound, LifeBuoy, Pencil, Plus } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { api, type Chatbot, type Horario } from "../api";
 import { ehAdmin, useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
@@ -86,17 +87,16 @@ export function PaginaChatbots() {
         )}
       </Cartao>
 
-      <Cartao titulo="Como configurar na plataforma" className="mt-5">
-        <ol className="grid list-decimal gap-1.5 pl-5 text-sm text-ink-2">
-          <li>No fluxo que roda no fim do atendimento, preencha os campos personalizados (Historico Conversa, Historico 50, Atendente, Fonte do contato, ADS…).</li>
-          <li>
-            Adicione um <b>External Request</b>: tipo <b>POST</b>, URL = o link do chatbot, cabeçalho <code>Content-Type: application/json</code>.
-          </li>
-          <li>No corpo, mande o contato completo (com os campos personalizados), como já é feito hoje.</li>
-          <li>
-            Use <b>Testar Agora</b>: a resposta deve ser <code>"ok": true</code> e o envio aparece em <b>Envios recebidos</b>. Depois, <b>Publicar</b> o fluxo.
-          </li>
-        </ol>
+      <Cartao className="mt-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <LifeBuoy className="size-5 text-accent" />
+          <p className="min-w-0 flex-1 text-sm text-ink-2">
+            <b className="text-ink">Primeira vez configurando?</b> O passo a passo mostra os campos que a plataforma precisa ter, como montar o External Request e como testar.
+          </p>
+          <Link to="/como-configurar" className="rounded-lg border border-line px-3 py-2 text-sm font-medium hover:bg-surface-2">
+            Ver o passo a passo
+          </Link>
+        </div>
       </Cartao>
 
       {link && (
@@ -104,7 +104,10 @@ export function PaginaChatbots() {
           <div className="grid gap-3">
             <Alerta tipo="aviso">Copie agora: por segurança, o link completo só aparece esta vez. Se perder, gere outro.</Alerta>
             <code className="break-all rounded-md bg-surface-2 p-3 text-xs">{link.url}</code>
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <Link to="/como-configurar" className="text-sm font-medium text-accent hover:underline">
+                Como usar este link
+              </Link>
               <BotaoCopiar texto={link.url} rotulo="Copiar link" />
             </div>
           </div>

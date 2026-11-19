@@ -4,6 +4,7 @@ import {
   Building2,
   FileText,
   GitBranch,
+  LifeBuoy,
   KeyRound,
   Layers,
   ListChecks,
@@ -47,6 +48,7 @@ const SECOES: { titulo?: string; itens: Item[] }[] = [
     titulo: "Sistema",
     itens: [
       { para: "/eventos", rotulo: "Envios recebidos", Icone: Radio },
+      { para: "/como-configurar", rotulo: "Como configurar", Icone: LifeBuoy },
       { para: "/usuarios", rotulo: "Usuários", Icone: Users, admin: true },
       { para: "/conta", rotulo: "Minha senha", Icone: KeyRound },
     ],
@@ -117,7 +119,7 @@ export function Layout() {
     <div className="flex min-h-full">
       <aside className="hidden lg:flex print:hidden w-60 shrink-0 flex-col gap-6 border-r border-line bg-surface px-3 py-4 sticky top-0 h-screen">
         <Marca empresa={empresa?.nome} />
-        <div className="flex-1 overflow-y-auto">{nav}</div>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">{nav}</div>
         {rodape}
       </aside>
 
@@ -125,7 +127,7 @@ export function Layout() {
         <div className="lg:hidden fixed inset-0 z-40 bg-black/40" onClick={fechar}>
           <aside className="flex h-full w-72 flex-col gap-6 bg-surface px-3 py-4" onClick={(e) => e.stopPropagation()}>
             <Marca empresa={empresa?.nome} />
-            <div className="flex-1 overflow-y-auto">{nav}</div>
+            <div className="flex-1 overflow-y-auto overflow-x-hidden">{nav}</div>
             {rodape}
           </aside>
         </div>
