@@ -81,7 +81,11 @@ export async function calcularPainel(empresaId: string, query: FiltroAtendimento
     const serie = [
       ...(await db.execute(sql`
         select to_char(a.inicio_em at time zone ${tz}, 'YYYY-MM-DD') as dia, a.chatbot_id as chatbot_id,
-          count(*)::int as total, count(*) filter (where a.precisou_humano)::int as humano, count(*) filter (where a.sem_humano)::int as sem_humano
+          count(*)::int as total, count(*) filter (where a.precisou_humano)::int as humano, count(*) filter (where a.sem_humano)::int as sem_humano,
+          count(*) filter (where a.atendido_ate_30)::int as ate_30,
+          count(*) filter (where a.tempo_ate_humano_s is not null)::int as com_tempo,
+          coalesce(sum(a.tempo_ate_humano_s), 0)::bigint::float8 as soma_tempo,
+          count(*) filter (where a.lead_novo)::int as leads_novos
         from atendimentos a where ${onde}
         group by 1, 2 order by 1`)),
     ].map(camel);
@@ -96,7 +100,38 @@ export async function calcularPainel(empresaId: string, query: FiltroAtendimento
         group by 1, 2`)),
     ].map(camel);
 
-    return { resumo, porChatbot, porDepartamento, porCidade, porCanal, porFonte, porOrigem, porAnuncio, porAtendente, porTime, transferencias, serie, horarios };
+    // Distribuição dos tempos em faixas (quantos atendimentos caem em cada faixa)
+    const FAIXAS = `case
+        when {c} < 300 then 0 when {c} < 900 then 1 when {c} < 1800 then 2
+        when {c} < 3600 then 3 when {c} < 7200 then 4 else 5 end`;
+    const faixa = async (coluna: string) =>
+      [
+        ...(await db.execute(sql`
+          select ${sql.raw(FAIXAS.replaceAll("{c}", coluna))}::int as faixa, count(*)::int as total
+          from atendimentos a where ${onde} and ${sql.raw(coluna)} is not null
+          group by 1 order by 1`)),
+      ].map(camel);
+    const [faixasAteHumano, faixasResposta] = await Promise.all([faixa("a.tempo_ate_humano_s"), faixa("a.tempo_medio_resposta_s")]);
+
+    // Quem manda as mensagens nas conversas
+    const [mensagens] = [
+      ...(await db.execute(sql`
+        select coalesce(sum(a.msgs_cliente), 0)::int as cliente, coalesce(sum(a.msgs_bot), 0)::int as bot,
+               coalesce(sum(a.msgs_humano), 0)::int as humano, coalesce(sum(a.msgs_api), 0)::int as api
+        from atendimentos a where ${onde}`)),
+    ].map(camel);
+
+    const [porInteresse, porEtiqueta] = await Promise.all([
+      agrupar(onde, "lower(coalesce(a.interesse, ''))", "coalesce(initcap(min(a.interesse)), 'Não identificado')", "", "", true),
+      db
+        .execute(sql`
+          select e.id as chave, e.nome as rotulo, e.cor, count(*)::int as total
+          from atendimento_etiquetas x join etiquetas e on e.id = x.etiqueta_id join atendimentos a on a.id = x.atendimento_id
+          where ${onde} group by 1, 2, 3 order by total desc limit 20`)
+        .then((r) => [...r].map(camel)),
+    ]);
+
+    return { resumo, porChatbot, porDepartamento, porCidade, porCanal, porFonte, porOrigem, porAnuncio, porAtendente, porTime, transferencias, serie, horarios, faixasAteHumano, faixasResposta, mensagens, porInteresse, porEtiqueta };
 }
 
 export const rotasDashboard = new Elysia({ prefix: "/api" })

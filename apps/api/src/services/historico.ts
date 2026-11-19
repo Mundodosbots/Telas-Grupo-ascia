@@ -352,6 +352,34 @@ export function calcularTempos(msgs: Mensagem[], horario: HorarioAtendimento, fu
   };
 }
 
+/**
+ * Marca, mensagem a mensagem, o que o painel mede (mesma regra de calcularTempos):
+ * a mensagem do robô que transferiu, a 1ª resposta humana e, para cada bloco de mensagens
+ * do cliente na fila, quanto tempo (útil) ele esperou pela resposta ou se ficou sem resposta.
+ */
+export function marcarEsperas<M extends { em: Date; tipo: string; texto: string }>(
+  msgs: M[],
+  horario: HorarioAtendimento,
+  fuso: string,
+): (M & { esperaS?: number; semResposta?: boolean; marco?: "transferencia" | "primeira_humana" })[] {
+  const util = (a: Date, b: Date) => segundosUteis(a, b, horario, fuso);
+  const primeiraHumana = msgs.find((m) => m.tipo === "humano") ?? null;
+  const primeiraCliente = msgs.find((m) => m.tipo === "cliente") ?? null;
+  const transferencia =
+    msgs.find((m) => (m.tipo === "bot" || m.tipo === "api") && TRANSFERENCIA.test(normalizar(m.texto)) && (!primeiraHumana || m.em <= primeiraHumana.em)) ?? null;
+  const inicioFila = transferencia?.em ?? primeiraCliente?.em ?? null;
+  return msgs.map((m, i) => {
+    const r: M & { esperaS?: number; semResposta?: boolean; marco?: "transferencia" | "primeira_humana" } = { ...m };
+    if (m === transferencia) r.marco = "transferencia";
+    if (m === primeiraHumana) r.marco = "primeira_humana";
+    if (m.tipo !== "cliente" || !inicioFila || m.em < inicioFila || (i > 0 && msgs[i - 1]!.tipo === "cliente")) return r;
+    const resposta = msgs.slice(i + 1).find((x) => x.tipo === "humano");
+    if (resposta) r.esperaS = util(m.em, resposta.em);
+    else if (primeiraHumana) r.semResposta = true;
+    return r;
+  });
+}
+
 /** Horário padrão (o que o bot da Fiat informa aos clientes) */
 export const HORARIO_PADRAO: HorarioAtendimento = {
   "1": [["07:30", "11:30"], ["13:30", "17:30"]],

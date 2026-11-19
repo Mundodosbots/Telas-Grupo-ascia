@@ -17,9 +17,20 @@ import {
 } from "../db/schema";
 import { protegido } from "../lib/auth";
 import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
+import { marcarEsperas } from "../services/historico";
 import { reorganizar } from "../services/organizador";
 
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
+
+/** Ordem da lista: mais recentes (padrão) ou os piores casos primeiro */
+const ORDENS = {
+  recentes: [desc(atendimentos.inicioEm)],
+  espera: [sql`${atendimentos.tempoMaxRespostaS} desc nulls last`, desc(atendimentos.esperasAcima30), desc(atendimentos.inicioEm)],
+  humano: [sql`${atendimentos.semHumano} desc`, sql`${atendimentos.tempoAteHumanoS} desc nulls last`, desc(atendimentos.inicioEm)],
+  resposta: [sql`${atendimentos.tempoMedioRespostaS} desc nulls last`, desc(atendimentos.inicioEm)],
+  antigos: [asc(atendimentos.inicioEm)],
+} as const;
+const ordemDe = (o?: string) => ORDENS[(o ?? "") as keyof typeof ORDENS] ?? ORDENS.recentes;
 const LIMITE_RELATORIO = 5000;
 
 async function etiquetasDe(ids: string[]) {
@@ -63,6 +74,8 @@ const colunasLista = {
   atendidoAte30: atendimentos.atendidoAte30,
   tempoAteHumanoS: atendimentos.tempoAteHumanoS,
   tempoMedioRespostaS: atendimentos.tempoMedioRespostaS,
+  tempoMaxRespostaS: atendimentos.tempoMaxRespostaS,
+  semResposta: atendimentos.semResposta,
   esperasAcima30: atendimentos.esperasAcima30,
   transferencias: atendimentos.transferencias,
   leadNovo: atendimentos.leadNovo,
@@ -84,13 +97,13 @@ function consultaLista(onde: ReturnType<typeof and>) {
 export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   .use(protegido({ empresa: true }))
   .get("/", async ({ query, empresaId }) => {
-    const f = query as FiltroAtendimentos & { pagina?: string; por_pagina?: string };
+    const f = query as FiltroAtendimentos & { pagina?: string; por_pagina?: string; ordem?: string };
     const porPagina = Math.min(100, Math.max(1, Number(f.por_pagina) || 25));
     const pagina = Math.max(1, Number(f.pagina) || 1);
     const onde = and(...condicoesAtendimentos(empresaId, f));
     const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(onde)) as [{ total: number }];
     const itens = await consultaLista(onde)
-      .orderBy(desc(atendimentos.inicioEm))
+      .orderBy(...ordemDe(f.ordem))
       .limit(porPagina)
       .offset((pagina - 1) * porPagina);
     const tags = await etiquetasDe(itens.map((i) => i.id));
@@ -100,7 +113,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   .get("/relatorio", async ({ query, empresaId }) => {
     const onde = and(...condicoesAtendimentos(empresaId, query as FiltroAtendimentos));
     const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(onde)) as [{ total: number }];
-    const itens = await consultaLista(onde).orderBy(desc(atendimentos.inicioEm)).limit(LIMITE_RELATORIO);
+    const itens = await consultaLista(onde).orderBy(...ordemDe((query as { ordem?: string }).ordem)).limit(LIMITE_RELATORIO);
     const tags = await etiquetasDe(itens.map((i) => i.id));
     return { total, limite: LIMITE_RELATORIO, itens: itens.map((i) => ({ ...i, etiquetas: (tags.get(i.id) ?? []).map((e) => e.nome) })) };
   })
@@ -115,6 +128,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
           chatbotNome: chatbots.nome,
           chatbotCor: chatbots.cor,
           fuso: chatbots.fuso,
+          horario: chatbots.horario,
           atendenteNome: atendentes.nome,
           origemNome: origens.nome,
           origemCor: origens.cor,
@@ -170,7 +184,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         classificadoPor: a.classificadoPor,
         etiquetas: tags.get(params.id) ?? [],
         humanos,
-        conversa,
+        conversa: marcarEsperas(conversa, a.horario, a.fuso),
         outros,
       };
     },

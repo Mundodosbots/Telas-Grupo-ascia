@@ -1,5 +1,5 @@
-import { AlertTriangle, Check, CheckCircle2, CircleDashed, Copy, Hand, Loader2, X, XCircle } from "lucide-react";
-import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { AlertTriangle, Check, CheckCircle2, CircleDashed, Copy, Hand, Info, Loader2, X, XCircle } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import type { StatusClassificacao } from "../api";
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -33,12 +33,70 @@ export function Botao({
   );
 }
 
-export function Cartao({ titulo, acao, children, className }: { titulo?: ReactNode; acao?: ReactNode; children: ReactNode; className?: string }) {
+/**
+ * "i" com explicação: aparece ao passar o mouse, ao focar com o teclado ou ao tocar (celular).
+ * O balão abre para o lado com mais espaço, para não sair da tela.
+ */
+export function Dica({ texto, className }: { texto: string; className?: string }) {
+  const [aberta, setAberta] = useState(false);
+  const [lado, setLado] = useState<"esq" | "dir" | "centro">("centro");
+  const ref = useRef<HTMLSpanElement>(null);
+  const id = useId();
+  const abrir = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setLado(r.left < 150 ? "esq" : window.innerWidth - r.right < 150 ? "dir" : "centro");
+    setAberta(true);
+  };
+  useEffect(() => {
+    if (!aberta) return;
+    const fora = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setAberta(false);
+    window.addEventListener("pointerdown", fora);
+    return () => window.removeEventListener("pointerdown", fora);
+  }, [aberta]);
+  return (
+    <span ref={ref} className={cx("relative inline-flex align-middle", className)} onMouseEnter={abrir} onMouseLeave={() => setAberta(false)}>
+      <button
+        type="button"
+        aria-label="O que é isto?"
+        aria-describedby={aberta ? id : undefined}
+        onFocus={abrir}
+        onBlur={() => setAberta(false)}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          aberta ? setAberta(false) : abrir();
+        }}
+        className="rounded-full text-muted hover:text-accent focus-visible:text-accent cursor-help"
+      >
+        <Info className="size-3.5" />
+      </button>
+      {aberta && (
+        <span
+          role="tooltip"
+          id={id}
+          className={cx(
+            "absolute top-full z-40 mt-1.5 w-64 rounded-lg border border-line bg-surface px-3 py-2 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-ink-2 shadow-lg",
+            lado === "esq" && "left-0",
+            lado === "dir" && "right-0",
+            lado === "centro" && "left-1/2 -translate-x-1/2",
+          )}
+        >
+          {texto}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function Cartao({ titulo, dica, acao, children, className }: { titulo?: ReactNode; dica?: string; acao?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={cx("rounded-xl border border-line bg-surface min-w-0", className)}>
       {(titulo || acao) && (
-        <header className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2">
-          <h2 className="text-[13px] font-semibold text-ink">{titulo}</h2>
+        <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 pt-3.5 pb-2">
+          <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
+            {titulo}
+            {dica && <Dica texto={dica} />}
+          </h2>
           {acao}
         </header>
       )}

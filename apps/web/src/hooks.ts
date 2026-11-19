@@ -84,7 +84,31 @@ const FILTROS_URL = {
   humano: "humano",
   novo: "novo",
   busca: "busca",
+  situacao: "situacao",
+  faixa_humano: "faixa_humano",
+  faixa_resposta: "faixa_resposta",
+  dia_semana: "dia_semana",
+  hora: "hora",
+  interesse: "interesse",
+  ordem: "ordem",
 } as const;
+
+/** Parâmetros de "recorte" (vêm de um clique no painel); a lista mostra cada um como um chip removível */
+export const RECORTES = ["situacao", "faixa_humano", "faixa_resposta", "dia_semana", "hora", "interesse", "anuncio", "novo", "canal", "fonte", "etiqueta"] as const;
+
+/**
+ * Link para a lista de atendimentos mantendo os filtros da tela atual (período, chatbot…) e somando o recorte.
+ * Ex.: linkLista(params, { situacao: "esperou30", ordem: "espera" })
+ */
+export function linkLista(params: URLSearchParams, extra: Record<string, string | undefined>) {
+  const p = new URLSearchParams(params);
+  for (const [k, v] of Object.entries(extra)) {
+    if (v === undefined || v === "") p.delete(k);
+    else p.set(k, v);
+  }
+  p.delete("pagina");
+  return `/atendimentos?${p}`;
+}
 
 /** Filtros guardados na URL: dá para compartilhar o link com o filtro aplicado */
 export function useFiltros() {

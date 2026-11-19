@@ -123,6 +123,8 @@ export type AtendimentoItem = {
   atendidoAte30: boolean | null;
   tempoAteHumanoS: number | null;
   tempoMedioRespostaS: number | null;
+  tempoMaxRespostaS: number | null;
+  semResposta: number;
   esperasAcima30: number;
   transferencias: number;
   leadNovo: boolean;
@@ -131,7 +133,18 @@ export type AtendimentoItem = {
 };
 export type Pagina<T> = { total: number; pagina: number; porPagina: number; itens: T[] };
 
-export type MensagemConversa = { id: string; em: string; tipo: "cliente" | "bot" | "api" | "humano"; remetente: string; texto: string };
+export type MensagemConversa = {
+  id: string;
+  em: string;
+  tipo: "cliente" | "bot" | "api" | "humano";
+  remetente: string;
+  texto: string;
+  /** Mensagem do cliente na fila: quanto esperou (s, em horário de atendimento) pela resposta humana */
+  esperaS?: number;
+  /** Mensagem do cliente que ficou sem resposta humana */
+  semResposta?: boolean;
+  marco?: "transferencia" | "primeira_humana";
+};
 export type AtendimentoDetalhe = {
   id: string;
   protocolo: string | null;
@@ -230,8 +243,14 @@ export type Painel = {
   porAtendente: Grupo[];
   porTime: Grupo[];
   transferencias: { chave: string; rotulo: string; feitas: number; recebidas: number; participou: number }[];
-  serie: { dia: string; chatbotId: string; total: number; humano: number; semHumano: number }[];
+  serie: { dia: string; chatbotId: string; total: number; humano: number; semHumano: number; ate30: number; comTempo: number; somaTempo: number; leadsNovos: number }[];
   horarios: { diaSemana: number; hora: number; total: number }[];
+  /** Faixas: 0 = até 5 min, 1 = 5–15, 2 = 15–30, 3 = 30–60, 4 = 1–2 h, 5 = mais de 2 h */
+  faixasAteHumano: { faixa: number; total: number }[];
+  faixasResposta: { faixa: number; total: number }[];
+  mensagens: { cliente: number; bot: number; humano: number; api: number };
+  porInteresse: Grupo[];
+  porEtiqueta: { chave: string; rotulo: string; cor: string | null; total: number }[];
 };
 
 export type Regra = {

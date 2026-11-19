@@ -15,7 +15,20 @@ export type LinhaBarra = {
 };
 
 /** Barras horizontais em HTML: rótulo à esquerda, valor à direita, clique leva à lista filtrada */
-export function ListaBarras({ linhas, total, max = 12, vazio = "Sem dados no período" }: { linhas: LinhaBarra[]; total: number; max?: number; vazio?: string }) {
+export function ListaBarras({
+  linhas,
+  total,
+  max = 12,
+  vazio = "Sem dados no período",
+  formato,
+}: {
+  linhas: LinhaBarra[];
+  total: number;
+  max?: number;
+  vazio?: string;
+  /** Mostra o valor formatado (ex.: duração) no lugar de "número + %" */
+  formato?: (v: number) => string;
+}) {
   const nav = useNavigate();
   if (!linhas.length) return <p className="py-6 text-center text-sm text-muted">{vazio}</p>;
   const visiveis = linhas.slice(0, max);
@@ -29,7 +42,7 @@ export function ListaBarras({ linhas, total, max = 12, vazio = "Sem dados no per
             type="button"
             disabled={!l.link}
             onClick={() => l.link && nav(l.link)}
-            title={`${l.rotulo}: ${numero(l.valor)} (${pct(l.valor, total)})`}
+            title={`${l.rotulo}: ${formato ? formato(l.valor) : `${numero(l.valor)} (${pct(l.valor, total)})`}${l.link ? " · clique para ver a lista" : ""}`}
             className={cx(
               "group grid w-full grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3 rounded-md px-1.5 py-1 text-left",
               l.link && "hover:bg-surface-2 cursor-pointer",
@@ -48,9 +61,9 @@ export function ListaBarras({ linhas, total, max = 12, vazio = "Sem dados no per
                 style={{ width: `${Math.max(2, (l.valor / maior) * 100)}%`, background: l.cor ?? "var(--accent)" }}
               />
             </span>
-            <span className="w-16 text-right text-[13px] tabular">
-              <span className="font-medium text-ink">{numero(l.valor)}</span>
-              <span className="ml-1 text-[11px] text-muted">{pct(l.valor, total)}</span>
+            <span className={cx("text-right text-[13px] tabular", formato ? "w-20" : "w-16")}>
+              <span className="font-medium text-ink">{formato ? formato(l.valor) : numero(l.valor)}</span>
+              {!formato && <span className="ml-1 text-[11px] text-muted">{pct(l.valor, total)}</span>}
             </span>
           </button>
         </li>

@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, Hourglass, MessageSquareOff, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, type AtendimentoDetalhe, type MensagemConversa } from "../api";
 import { useAuth } from "../auth";
-import { Alerta, Botao, Campo, Cartao, Carregando, Chip, cx, Ponto, Selecao, StatusBadge } from "../components/ui";
+import { Alerta, Botao, Campo, Cartao, Carregando, Chip, cx, Dica, Ponto, Selecao, StatusBadge } from "../components/ui";
 import { useDepartamentos, useEtiquetas, useOrigens } from "../hooks";
 import { dataHora, duracao, telefone } from "../lib/formato";
+import { GLOSSARIO } from "../lib/glossario";
+
+const LIMITE = 30 * 60;
 
 export function PaginaAtendimento() {
   const { id } = useParams();
@@ -19,6 +22,30 @@ export function PaginaAtendimento() {
     enabled: !!empresa,
   });
   const voltar = () => (window.history.state?.idx > 0 ? navegar(-1) : navegar("/atendimentos"));
+
+  const [sp] = useSearchParams();
+  const [foco, setFoco] = useState<string | null>(null);
+  const esperas = useMemo(() => (q.data?.conversa ?? []).filter((m) => (m.esperaS ?? 0) > LIMITE || m.semResposta), [q.data]);
+  const pior = useMemo(
+    () => (q.data?.conversa ?? []).reduce<MensagemConversa | null>((p, m) => (m.esperaS !== undefined && (!p || m.esperaS > (p.esperaS ?? 0)) ? m : p), null),
+    [q.data],
+  );
+  const irPara = (id?: string) => id && setFoco(id);
+  // Veio da lista de "esperas": abre direto na pior espera (as sem resposta contam como as piores)
+  useEffect(() => {
+    if (!q.data || foco) return;
+    if (sp.get("ver") === "humano") {
+      const c = q.data.conversa;
+      // Sem resposta humana: mostra a última mensagem do cliente (a que ficou esperando)
+      return void irPara(
+        c.find((m) => m.marco === "primeira_humana")?.id ?? c.find((m) => m.marco === "transferencia")?.id ?? [...c].reverse().find((m) => m.tipo === "cliente")?.id,
+      );
+    }
+    if (sp.get("ver") !== "esperas") return;
+    const ordenadas = [...esperas].sort((x, y) => (y.semResposta ? 1e12 : (y.esperaS ?? 0)) - (x.semResposta ? 1e12 : (x.esperaS ?? 0)));
+    irPara(ordenadas[0]?.id ?? pior?.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
 
   if (q.error) return <Alerta>{(q.error as Error).message}</Alerta>;
   if (!q.data) return <Carregando />;
@@ -52,10 +79,30 @@ export function PaginaAtendimento() {
       </div>
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tempo rotulo="Robô → humano" valor={a.semHumano ? "Sem humano" : duracao(a.tempoAteHumanoS)} ruim={a.semHumano || a.atendidoAte30 === false} bom={a.atendidoAte30 === true} />
-        <Tempo rotulo="1ª resposta humana" valor={duracao(a.tempoPrimeiraRespostaS)} sub="desde a 1ª mensagem do cliente" />
-        <Tempo rotulo="Resposta média" valor={duracao(a.tempoMedioRespostaS)} sub={a.tempoMaxRespostaS ? `máx. ${duracao(a.tempoMaxRespostaS)}` : undefined} />
-        <Tempo rotulo="Esperas > 30 min" valor={String(a.esperasAcima30)} sub={a.semResposta ? `${a.semResposta} sem resposta` : undefined} ruim={a.esperasAcima30 > 0} />
+        <Tempo
+          rotulo="Robô → humano"
+          dica={GLOSSARIO.roboHumano}
+          valor={a.semHumano ? "Sem humano" : duracao(a.tempoAteHumanoS)}
+          ruim={a.semHumano || a.atendidoAte30 === false}
+          bom={a.atendidoAte30 === true}
+          onClick={() => irPara(a.conversa.find((m) => m.marco === "primeira_humana")?.id ?? a.conversa.find((m) => m.marco === "transferencia")?.id)}
+        />
+        <Tempo rotulo="1ª resposta humana" dica={GLOSSARIO.primeiraResposta} valor={duracao(a.tempoPrimeiraRespostaS)} sub="desde a 1ª mensagem do cliente" />
+        <Tempo
+          rotulo="Resposta média"
+          dica={GLOSSARIO.respostaMedia}
+          valor={duracao(a.tempoMedioRespostaS)}
+          sub={a.tempoMaxRespostaS ? `máx. ${duracao(a.tempoMaxRespostaS)} · clique para ver` : undefined}
+          onClick={a.tempoMaxRespostaS ? () => irPara(pior?.id) : undefined}
+        />
+        <Tempo
+          rotulo="Esperas > 30 min"
+          dica={GLOSSARIO.esperas30}
+          valor={String(a.esperasAcima30)}
+          sub={a.semResposta ? `${a.semResposta} sem resposta` : a.esperasAcima30 ? "clique para ver" : undefined}
+          ruim={a.esperasAcima30 > 0}
+          onClick={esperas.length ? () => irPara(esperas[0]!.id) : undefined}
+        />
       </section>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -68,10 +115,11 @@ export function PaginaAtendimento() {
           }
         >
           {a.foraHorario && <Alerta tipo="info">O cliente chegou fora do horário de atendimento — os tempos contam a partir da abertura.</Alerta>}
-          <Conversa msgs={a.conversa} fuso={a.fuso} />
+          <Conversa msgs={a.conversa} fuso={a.fuso} foco={foco} onIr={irPara} />
         </Cartao>
 
         <div className="grid content-start gap-5">
+          {a.precisouHumano && <Esperas msgs={a.conversa} fuso={a.fuso} foco={foco} onIr={irPara} />}
           <Organizacao a={a} />
           <Cartao titulo="Quem atendeu">
             {a.humanos.length ? (
@@ -156,12 +204,67 @@ export function PaginaAtendimento() {
   );
 }
 
-function Tempo({ rotulo, valor, sub, ruim, bom }: { rotulo: string; valor: string; sub?: string; ruim?: boolean; bom?: boolean }) {
+function Tempo({ rotulo, dica, valor, sub, ruim, bom, onClick }: { rotulo: string; dica?: string; valor: string; sub?: string; ruim?: boolean; bom?: boolean; onClick?: () => void }) {
   return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3">
-      <p className="text-xs text-muted">{rotulo}</p>
+    <div className={cx("relative rounded-xl border border-line bg-surface px-4 py-3", onClick && "hover:border-accent")}>
+      {onClick && <button onClick={onClick} className="absolute inset-0 rounded-xl cursor-pointer" aria-label={`${rotulo}: ver na conversa`} />}
+      <p className="flex items-center gap-1 text-xs text-muted">
+        {rotulo} {dica && <Dica texto={dica} className="relative z-10" />}
+      </p>
       <p className={cx("mt-0.5 text-xl font-semibold tabular", ruim && "text-bad", bom && "text-good")}>{valor}</p>
       {sub && <p className="text-xs text-muted">{sub}</p>}
+    </div>
+  );
+}
+
+/** Lista das esperas da conversa: clique leva à mensagem */
+function Esperas({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: string; foco: string | null; onIr: (id: string) => void }) {
+  const itens = msgs.filter((m) => m.esperaS !== undefined || m.semResposta || m.marco);
+  const longas = itens.filter((m) => (m.esperaS ?? 0) > LIMITE || m.semResposta);
+  const i = longas.findIndex((m) => m.id === foco);
+  return (
+    <Cartao
+      titulo="Esperas nesta conversa"
+      dica="Cada vez que o cliente escreveu e ficou esperando o atendente. Clique para ir até a mensagem na conversa. Em vermelho, as que passaram de 30 minutos (em horário de atendimento) ou ficaram sem resposta."
+      acao={longas.length > 1 && <NavEsperas longas={longas} i={i} onIr={onIr} />}
+    >
+      {!itens.length ? (
+        <p className="text-sm text-muted">Nenhuma espera medida.</p>
+      ) : (
+        <ol className="-mx-2 grid max-h-72 gap-0.5 overflow-y-auto">
+          {itens.map((m) => {
+            const ruim = (m.esperaS ?? 0) > LIMITE || m.semResposta;
+            return (
+              <li key={m.id}>
+                <button
+                  onClick={() => onIr(m.id)}
+                  className={cx("flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-surface-2 cursor-pointer", foco === m.id && "bg-surface-2")}
+                >
+                  <span className="w-20 shrink-0 text-muted tabular">{fmtHora(m.em, fuso)}</span>
+                  <span className={cx("min-w-0 flex-1 truncate", m.marco ? "font-medium text-ink" : "text-ink-2")}>
+                    {m.marco === "transferencia" ? "Robô transferiu" : m.marco === "primeira_humana" ? `${m.remetente} respondeu` : m.texto}
+                  </span>
+                  {m.semResposta ? (
+                    <span className="font-medium text-bad">sem resposta</span>
+                  ) : m.esperaS !== undefined ? (
+                    <span className={cx("tabular", ruim ? "font-semibold text-bad" : "text-ink-2")}>{duracao(m.esperaS)}</span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </Cartao>
+  );
+}
+
+function Marco({ children }: { children: ReactNode }) {
+  return (
+    <div className="my-1 flex w-full items-center gap-2 text-[11px] text-muted">
+      <span className="h-px flex-1 bg-line" />
+      {children}
+      <span className="h-px flex-1 bg-line" />
     </div>
   );
 }
@@ -179,11 +282,46 @@ function Linha({ rotulo, children }: { rotulo: string; children: ReactNode }) {
 const fmtHora = (iso: string, fuso: string) =>
   new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 
-function Conversa({ msgs, fuso }: { msgs: MensagemConversa[]; fuso: string }) {
+/** ↑ 2/5 ↓ — anda entre as esperas longas da conversa */
+function NavEsperas({ longas, i, onIr }: { longas: MensagemConversa[]; i: number; onIr: (id: string) => void }) {
+  const ir = (passo: number) => onIr(longas[(Math.max(i, passo > 0 ? -1 : 0) + passo + longas.length) % longas.length]!.id);
+  return (
+    <span className="flex items-center gap-1">
+      <button onClick={() => ir(-1)} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-ink cursor-pointer" aria-label="Espera anterior">
+        <ChevronUp className="size-4" />
+      </button>
+      <span className="text-xs text-muted tabular">
+        {i >= 0 ? i + 1 : "–"}/{longas.length}
+      </span>
+      <button onClick={() => ir(1)} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-ink cursor-pointer" aria-label="Próxima espera">
+        <ChevronDown className="size-4" />
+      </button>
+    </span>
+  );
+}
+
+function Conversa({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: string; foco: string | null; onIr: (id: string) => void }) {
   const [tudo, setTudo] = useState(msgs.length <= 80);
   const visiveis = tudo ? msgs : msgs.slice(-80);
+  const longas = msgs.filter((m) => (m.esperaS ?? 0) > LIMITE || m.semResposta);
+  // Foco numa mensagem (vindo das esperas): mostra as anteriores se preciso e rola até ela
+  useEffect(() => {
+    if (!foco) return;
+    if (!tudo && !visiveis.some((m) => m.id === foco)) return setTudo(true);
+    document.getElementById(`msg-${foco}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [foco, tudo]);
   return (
     <div className="grid gap-2">
+      {longas.length > 0 && (
+        <div className="sticky top-3 z-10 flex items-center gap-2 justify-self-center rounded-full border border-bad/40 bg-surface py-0.5 pl-3 pr-1 text-xs shadow-md">
+          <Hourglass className="size-3.5 text-bad" />
+          <span className="text-ink-2">
+            {longas.length} espera(s) longa(s) ou sem resposta
+          </span>
+          <NavEsperas longas={longas} i={longas.findIndex((m) => m.id === foco)} onIr={onIr} />
+        </div>
+      )}
       {!tudo && (
         <button onClick={() => setTudo(true)} className="justify-self-center text-xs text-accent hover:underline cursor-pointer">
           Mostrar as {msgs.length - 80} mensagens anteriores
@@ -192,11 +330,16 @@ function Conversa({ msgs, fuso }: { msgs: MensagemConversa[]; fuso: string }) {
       {visiveis.map((m) => {
         const cliente = m.tipo === "cliente";
         const humano = m.tipo === "humano";
+        const longa = (m.esperaS ?? 0) > LIMITE;
         return (
-          <div key={m.id} className={cx("flex", cliente ? "justify-start" : "justify-end")}>
+          <div key={m.id} id={`msg-${m.id}`} className={cx("grid scroll-mt-24 gap-1", cliente ? "justify-items-start" : "justify-items-end")}>
+            {m.marco === "transferencia" && <Marco>Robô transferiu para o atendimento humano: a espera começa aqui</Marco>}
+            {m.marco === "primeira_humana" && <Marco>1ª resposta de um atendente</Marco>}
             <div
               className={cx(
                 "max-w-[85%] rounded-2xl px-3 py-2 text-sm",
+                foco === m.id && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
+                cliente && (longa || m.semResposta) && "outline outline-1 outline-bad",
                 cliente && "rounded-bl-sm bg-surface-2 text-ink",
                 humano && "rounded-br-sm bg-accent text-white",
                 !cliente && !humano && "rounded-br-sm border border-line bg-surface text-ink-2",
@@ -207,6 +350,15 @@ function Conversa({ msgs, fuso }: { msgs: MensagemConversa[]; fuso: string }) {
               </p>
               <p className="whitespace-pre-line break-words">{m.texto}</p>
             </div>
+            {m.semResposta ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-bad">
+                <MessageSquareOff className="size-3" /> Ficou sem resposta do atendente
+              </span>
+            ) : m.esperaS !== undefined ? (
+              <span className={cx("inline-flex items-center gap-1 text-[11px]", longa ? "font-medium text-bad" : "text-muted")}>
+                <Hourglass className="size-3" /> Esperou {duracao(m.esperaS)} pela resposta{longa && " (mais de 30 min)"}
+              </span>
+            ) : null}
           </div>
         );
       })}

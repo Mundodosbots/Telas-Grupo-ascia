@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useAtendentes, useChatbots, useDepartamentos, useEtiquetas, useFiltros, useOrigens, useTimes, PERIODOS } from "../hooks";
+import { SITUACOES } from "../lib/glossario";
 import { Campo, cx, Selecao } from "./ui";
 
 type Extra = "atendente" | "time" | "departamento" | "origem" | "etiqueta" | "canal" | "cidade" | "busca" | "humano";
@@ -119,10 +120,19 @@ export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
           />
         )}
         {tem("humano") && (
-          <label className="flex h-9 items-center gap-2 text-sm text-ink-2 cursor-pointer">
-            <input type="checkbox" className="size-4" checked={filtros.humano === "1"} onChange={(e) => definir({ humano: e.target.checked ? "1" : undefined })} />
-            Só os que foram para humano
-          </label>
+          <Selecao
+            rotulo="Situação"
+            value={filtros.situacao ?? (filtros.humano === "1" ? "humano" : "")}
+            onChange={(e) => definir({ situacao: e.target.value, humano: undefined })}
+            className="w-60"
+          >
+            <option value="">Todas</option>
+            {SITUACOES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.rotulo}
+              </option>
+            ))}
+          </Selecao>
         )}
       </div>
     </div>
