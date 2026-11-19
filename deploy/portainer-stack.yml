@@ -1,9 +1,9 @@
 version: "3.9"
 
 # ══════════════════════════════════════════════════════════════════
-# Ascia Screen — Painel de Atribuições (Portainer / Docker Swarm)
+# Atendly — painel de atendimento (Portainer / Docker Swarm)
 #
-# 1) DNS no Cloudflare: A `ascia-screen` → IP da VPS
+# 1) DNS no Cloudflare: A `atendly` → IP da VPS
 # 2) Postgres: usa o servidor da stack mb_db (serviço mb_postgres, rede CLNet),
 #    mas num BANCO PRÓPRIO (ascia_screen). O app cria o banco sozinho na
 #    primeira subida, se o usuário tiver permissão (o usuário padrão da imagem
@@ -20,9 +20,9 @@ version: "3.9"
 #    Se o host não resolver, tente POSTGRES_HOST=mb_db_mb_postgres
 #
 # URLs:
-#   https://ascia-screen.mundodosbots.com.br/                          ← Painel
-#   https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao    ← Webhook do chatbot
-#   https://ascia-screen.mundodosbots.com.br/api/saude                 ← Health check
+#   https://atendly.mundodosbots.com.br/                          ← Painel
+#   https://atendly.mundodosbots.com.br/api/webhook/atribuicao    ← Webhook do chatbot
+#   https://atendly.mundodosbots.com.br/api/saude                 ← Health check
 #
 # Nada de segredo neste arquivo: ele está no GitHub.
 # ══════════════════════════════════════════════════════════════════
@@ -79,7 +79,7 @@ services:
         - traefik.enable=1
         - traefik.docker.network=CLNet
         # Um serviço só: o app serve o painel e a API (/api) — sem strip de prefixo
-        - traefik.http.routers.ascia-screen.rule=Host(`ascia-screen.mundodosbots.com.br`)
+        - traefik.http.routers.ascia-screen.rule=Host(`atendly.mundodosbots.com.br`) || Host(`ascia-screen.mundodosbots.com.br`)
         - traefik.http.routers.ascia-screen.entrypoints=websecure
         - traefik.http.routers.ascia-screen.tls.certresolver=letsencryptresolver
         - traefik.http.routers.ascia-screen.service=ascia-screen

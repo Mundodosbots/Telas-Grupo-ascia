@@ -127,7 +127,7 @@ function Documento({ titulo, d, secoes, lista, autor, empresaNome }: { titulo: s
   return (
     <article className="folha mx-auto max-w-[1000px] rounded-xl border border-line px-4 py-5 sm:px-8 sm:py-7 shadow-sm text-[13px]">
       <header className="mb-5 border-b border-line pb-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{empresaNome} · Painel de Atendimento</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{empresaNome} · Atendly</p>
         <h1 className="mt-1 text-xl font-semibold text-ink">{titulo || "Relatório"}</h1>
         <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
           {filtrosTexto.map(([k, v]) => (

@@ -178,7 +178,7 @@ function Marca({ empresa }: { empresa?: string }) {
         <BarChart3 className="size-4.5" />
       </span>
       <div className="leading-tight min-w-0">
-        <p className="text-sm font-semibold">Painel de Atendimento</p>
+        <p className="text-sm font-semibold">Atendly</p>
         <p className="text-[11px] text-muted truncate">{empresa ?? "Mundo dos Bots"}</p>
       </div>
     </div>

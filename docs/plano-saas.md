@@ -1,4 +1,4 @@
-# Plano — Painel de Atendimento (SaaS)
+# Plano — Atendly (painel de atendimento SaaS)
 
 > Transformar o painel do Grupo Asia num SaaS multiempresa, que recebe **tudo** o que a plataforma
 > Mundo dos Bots manda no fim de cada atendimento, organiza com um agente de IA e mostra para o

@@ -15,7 +15,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 /*
- * Painel de Atendimento — SaaS multiempresa
+ * Atendly — painel de atendimento SaaS multiempresa
  *
  * Empresa (cliente) → Chatbots (cada um com seu link/token)
  *                   → Contatos → Atendimentos (1 por protocolo) → Mensagens

@@ -31,8 +31,8 @@ export function PaginaLogin() {
             <BarChart3 className="size-5" />
           </span>
           <div>
-            <h1 className="text-lg font-semibold">Painel de Atendimento</h1>
-            <p className="text-xs text-muted">Mundo dos Bots · acesso restrito</p>
+            <h1 className="text-lg font-semibold">Atendly</h1>
+            <p className="text-xs text-muted">Painel de atendimento · Mundo dos Bots</p>
           </div>
         </div>
         {erro && <Alerta>{erro}</Alerta>}

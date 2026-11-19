@@ -1,4 +1,4 @@
-# Painel de Atribuições — Grupo Asia
+# Atendly — painel de atendimento (Mundo dos Bots)
 
 Recebe do chatbot (Mundo dos Bots) um aviso a cada atribuição de conversa a um vendedor, guarda tudo no PostgreSQL, usa um agente da OpenAI para descobrir **de onde o cliente veio** e mostra para a gerência gráficos por **empresa, vendedor, origem e período**.
 
@@ -71,7 +71,7 @@ Content-Type: application/json
 Exemplo:
 
 ```bash
-curl -X POST https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao \
+curl -X POST https://atendly.mundodosbots.com.br/api/webhook/atribuicao \
   -H "Authorization: Bearer whk_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -103,7 +103,7 @@ Na primeira subida o app aplica as migrações e cria as 3 empresas, origens e e
 
 ## Produção: VPS com Portainer + Traefik
 
-Endereço: **https://ascia-screen.mundodosbots.com.br**. Segue o mesmo padrão das outras stacks da Mundo dos Bots: Docker Swarm, Traefik na rede `CLNet` com `letsencryptresolver` e Postgres da stack `mb_db`. O painel usa um **banco próprio** (`ascia_screen`) nesse servidor e cria o banco sozinho na primeira subida.
+Endereço: **https://atendly.mundodosbots.com.br**. Segue o mesmo padrão das outras stacks da Mundo dos Bots: Docker Swarm, Traefik na rede `CLNet` com `letsencryptresolver` e Postgres da stack `mb_db`. O painel usa um **banco próprio** (`painel_saas`) nesse servidor e cria o banco sozinho na primeira subida.
 
 **1. Publicar a imagem no Docker Hub** (na máquina de desenvolvimento, com `docker login` feito numa conta com acesso à organização `mundodosbots`):
 
@@ -125,7 +125,7 @@ docker push mundodosbots/ascia-screen --all-tags
 | `IMAGE_TAG` | não | Versão da imagem (padrão `latest`); use o hash do commit para poder voltar atrás |
 | `POSTGRES_HOST` / `POSTGRES_USER` / `POSTGRES_DB` | não | Padrões: `mb_postgres`, `mbuser`, `ascia_screen` |
 
-**4. Primeiro acesso:** entre com o master, vá em **Empresas e webhook** e gere o token de cada empresa. A URL do webhook para o chatbot é `https://ascia-screen.mundodosbots.com.br/api/webhook/atribuicao`.
+**4. Primeiro acesso:** entre com o master, vá em **Empresas e webhook** e gere o token de cada empresa. A URL do webhook para o chatbot é `https://atendly.mundodosbots.com.br/api/webhook/atribuicao`.
 
 **Atualizar:** publique a imagem nova (passo 1) e, no Portainer, abra o serviço e clique em *Update* com *Re-pull image* (ou troque o `IMAGE_TAG`). A atualização é `start-first` com rollback automático se o container novo não subir; as migrações do banco rodam sozinhas.
 
