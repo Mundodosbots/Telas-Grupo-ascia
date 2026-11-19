@@ -1,91 +1,72 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ne, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db/client";
-import { atendimentos, dicionarioEtiquetas, empresas, origens, regrasOrigem } from "../db/schema";
+import { atendimentos, contatos, mensagens, origens, regrasOrigem } from "../db/schema";
 import { protegido } from "../lib/auth";
-import { acordarAgente, agenteAtivo } from "../services/classificador";
-import { aplicarRegras } from "../services/ingestao";
+import { agenteAtivo, acordarOrganizador } from "../services/organizador";
+import { aplicarRegras } from "../services/regras";
 
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
 const corpoRegra = {
-  empresa_id: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
-  campo: t.Union([t.Literal("etiqueta"), t.Literal("fonte"), t.Literal("resumo")]),
+  campo: t.Union([t.Literal("etiqueta"), t.Literal("fonte"), t.Literal("canal"), t.Literal("anuncio"), t.Literal("texto")]),
   comparacao: t.Union([t.Literal("igual"), t.Literal("contem")]),
   valor: t.String({ minLength: 1, maxLength: 200 }),
   origem_id: t.String({ format: "uuid" }),
 };
+const JANELA_REAPLICAR_DIAS = 60;
 
 /**
- * Reavalia atendimentos não conferidos por humano:
- * - traduz etiquetas que estavam só com o ID (#123) usando o dicionário atual
- * - aplica as regras; quem deixou de bater em regra volta para a IA
+ * Reavalia as regras nos atendimentos recentes que não foram conferidos por humano.
+ * Só o último atendimento de cada contato tem fonte/anúncio (o envio é sobre ele).
  */
-export async function reaplicarRegras(empresaId?: string) {
+export async function reaplicarRegras(empresaId: string) {
+  const desde = new Date(Date.now() - JANELA_REAPLICAR_DIAS * 86_400_000);
   const lista = await db
-    .select({
-      id: atendimentos.id,
-      empresaId: atendimentos.empresaId,
-      etiquetas: atendimentos.etiquetasPlataforma,
-      fonte: atendimentos.fonteInformada,
-      resumo: atendimentos.resumo,
-      origemId: atendimentos.origemId,
-      origemRegraId: atendimentos.origemRegraId,
-    })
+    .select({ at: atendimentos, etiquetas: contatos.etiquetas })
     .from(atendimentos)
-    .where(and(ne(atendimentos.classificacaoStatus, "manual"), empresaId ? eq(atendimentos.empresaId, empresaId) : undefined));
-
-  const dicionarios = new Map<string, Map<string, string>>();
+    .innerJoin(contatos, eq(contatos.id, atendimentos.contatoId))
+    .where(and(eq(atendimentos.empresaId, empresaId), ne(atendimentos.classificacaoStatus, "manual"), gte(atendimentos.ultimaMsgEm, desde)))
+    .orderBy(desc(atendimentos.ultimaMsgEm));
+  const ultimoDoContato = new Set<string>();
   let alterados = 0;
-  for (const a of lista) {
-    if (!dicionarios.has(a.empresaId)) {
-      const linhas = await db.select().from(dicionarioEtiquetas).where(eq(dicionarioEtiquetas.empresaId, a.empresaId));
-      dicionarios.set(a.empresaId, new Map(linhas.map((l) => [l.idExterno, l.nome])));
-    }
-    const dic = dicionarios.get(a.empresaId)!;
-    const etiquetas = a.etiquetas.map((e) => (e.startsWith("#") ? (dic.get(e.slice(1)) ?? e) : e));
-    const regra = await aplicarRegras(db, a.empresaId, etiquetas, a.fonte ?? undefined, a.resumo);
-    const mudouEtiquetas = etiquetas.join("|") !== a.etiquetas.join("|");
-
-    if (regra && (regra.id !== a.origemRegraId || regra.origemId !== a.origemId)) {
+  for (const { at, etiquetas } of lista) {
+    if (ultimoDoContato.has(at.contatoId)) continue;
+    ultimoDoContato.add(at.contatoId);
+    const textos = await db.select({ texto: mensagens.texto }).from(mensagens).where(eq(mensagens.atendimentoId, at.id));
+    const texto = [...textos.map((x) => x.texto), ...Object.values(at.anuncio ?? {})].join("\n");
+    const regra = await aplicarRegras(db, empresaId, { etiquetas, fonte: at.fonte, canal: at.canal, anuncioPlataforma: at.anuncioPlataforma, texto });
+    if (regra && (regra.id !== at.origemRegraId || regra.origemId !== at.origemId)) {
       await db
         .update(atendimentos)
         .set({
-          etiquetasPlataforma: etiquetas,
           origemId: regra.origemId,
           origemRegraId: regra.id,
-          classificacaoStatus: agenteAtivo() ? "pendente" : "classificado",
-          classificacaoConfianca: 1,
           classificacaoJustificativa: regra.descricao,
-          classificacaoSugestao: null,
-          classificacaoTentativas: 0,
-          classificadoEm: new Date(),
+          classificacaoConfianca: 1,
+          ...(agenteAtivo() && { classificacaoStatus: "pendente" as const, classificacaoTentativas: 0 }),
           atualizadoEm: new Date(),
         })
-        .where(eq(atendimentos.id, a.id));
+        .where(eq(atendimentos.id, at.id));
       alterados++;
-    } else if (!regra && a.origemRegraId) {
-      // A regra que valia foi removida/desativada: devolve para a IA decidir
+    } else if (!regra && at.origemRegraId) {
+      // A regra que valia saiu: devolve para a IA decidir
       await db
         .update(atendimentos)
-        .set({ etiquetasPlataforma: etiquetas, origemRegraId: null, classificacaoStatus: "pendente", classificacaoTentativas: 0, atualizadoEm: new Date() })
-        .where(eq(atendimentos.id, a.id));
+        .set({ origemRegraId: null, classificacaoStatus: "pendente", classificacaoTentativas: 0, atualizadoEm: new Date() })
+        .where(eq(atendimentos.id, at.id));
       alterados++;
-    } else if (mudouEtiquetas) {
-      await db.update(atendimentos).set({ etiquetasPlataforma: etiquetas, atualizadoEm: new Date() }).where(eq(atendimentos.id, a.id));
     }
   }
-  if (alterados) acordarAgente();
-  return { analisados: lista.length, alterados };
+  if (alterados) acordarOrganizador();
+  return { analisados: ultimoDoContato.size, alterados };
 }
 
 export const rotasRegras = new Elysia({ prefix: "/api/regras" })
-  .use(protegido())
-  .get("/", async () => {
-    const linhas = await db
+  .use(protegido({ empresa: true }))
+  .get("/", ({ empresaId }) =>
+    db
       .select({
         id: regrasOrigem.id,
-        empresaId: regrasOrigem.empresaId,
-        empresaNome: empresas.nome,
         campo: regrasOrigem.campo,
         comparacao: regrasOrigem.comparacao,
         valor: regrasOrigem.valor,
@@ -94,30 +75,29 @@ export const rotasRegras = new Elysia({ prefix: "/api/regras" })
         origemCor: origens.cor,
         prioridade: regrasOrigem.prioridade,
         ativo: regrasOrigem.ativo,
-        uso: sql<number>`(select count(*)::int from atendimentos a where a.origem_regra_id = ${regrasOrigem.id})`,
+        uso: sql<number>`(select count(*)::int from atendimentos a where a.origem_regra_id = "regras_origem"."id")`,
       })
       .from(regrasOrigem)
       .innerJoin(origens, eq(origens.id, regrasOrigem.origemId))
-      .leftJoin(empresas, eq(empresas.id, regrasOrigem.empresaId))
-      .orderBy(asc(regrasOrigem.prioridade), asc(regrasOrigem.criadoEm));
-    return linhas;
-  })
+      .where(eq(regrasOrigem.empresaId, empresaId))
+      .orderBy(asc(regrasOrigem.prioridade), asc(regrasOrigem.criadoEm)),
+  )
+  .use(protegido({ papel: "admin", empresa: true }))
   .post(
     "/",
-    async ({ body, set }) => {
-      const [{ max }] = (await db.select({ max: sql<number>`coalesce(max(${regrasOrigem.prioridade}), 0)::int` }).from(regrasOrigem)) as [
-        { max: number },
-      ];
+    async ({ body, empresaId, set }) => {
+      const [origem] = await db.select({ id: origens.id }).from(origens).where(and(eq(origens.id, body.origem_id), eq(origens.empresaId, empresaId)));
+      if (!origem) {
+        set.status = 400;
+        return { erro: "Origem inválida" };
+      }
+      const [{ max }] = (await db
+        .select({ max: sql<number>`coalesce(max(${regrasOrigem.prioridade}), 0)::int` })
+        .from(regrasOrigem)
+        .where(eq(regrasOrigem.empresaId, empresaId))) as [{ max: number }];
       const [r] = await db
         .insert(regrasOrigem)
-        .values({
-          empresaId: body.empresa_id ?? null,
-          campo: body.campo,
-          comparacao: body.comparacao,
-          valor: body.valor.trim(),
-          origemId: body.origem_id,
-          prioridade: max + 10,
-        })
+        .values({ empresaId, campo: body.campo, comparacao: body.campo === "texto" ? "contem" : body.comparacao, valor: body.valor.trim(), origemId: body.origem_id, prioridade: max + 10 })
         .returning();
       set.status = 201;
       return r;
@@ -126,18 +106,17 @@ export const rotasRegras = new Elysia({ prefix: "/api/regras" })
   )
   .patch(
     "/:id",
-    async ({ params, body, set }) => {
+    async ({ params, body, empresaId, set }) => {
       const [r] = await db
         .update(regrasOrigem)
         .set({
-          ...(body.empresa_id !== undefined && { empresaId: body.empresa_id }),
           ...(body.campo && { campo: body.campo }),
-          ...(body.comparacao && { comparacao: body.comparacao }),
+          ...(body.comparacao && { comparacao: body.campo === "texto" ? "contem" : body.comparacao }),
           ...(body.valor && { valor: body.valor.trim() }),
           ...(body.origem_id && { origemId: body.origem_id }),
           ...(body.ativo !== undefined && { ativo: body.ativo }),
         })
-        .where(eq(regrasOrigem.id, params.id))
+        .where(and(eq(regrasOrigem.id, params.id), eq(regrasOrigem.empresaId, empresaId)))
         .returning();
       if (!r) {
         set.status = 404;
@@ -145,82 +124,27 @@ export const rotasRegras = new Elysia({ prefix: "/api/regras" })
       }
       return r;
     },
-    {
-      params: paramsId,
-      body: t.Object({
-        empresa_id: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
-        campo: t.Optional(corpoRegra.campo),
-        comparacao: t.Optional(corpoRegra.comparacao),
-        valor: t.Optional(corpoRegra.valor),
-        origem_id: t.Optional(corpoRegra.origem_id),
-        ativo: t.Optional(t.Boolean()),
-      }),
-    },
+    { params: paramsId, body: t.Partial(t.Object({ ...corpoRegra, ativo: t.Boolean() })) },
   )
   .delete(
     "/:id",
-    async ({ params }) => {
-      await db.delete(regrasOrigem).where(eq(regrasOrigem.id, params.id));
+    async ({ params, empresaId }) => {
+      await db.delete(regrasOrigem).where(and(eq(regrasOrigem.id, params.id), eq(regrasOrigem.empresaId, empresaId)));
       return { ok: true };
     },
     { params: paramsId },
   )
-  /** Nova ordem de prioridade: a primeira da lista vale mais */
+  /** Nova ordem: lista de ids, do primeiro ao último */
   .post(
     "/ordem",
-    async ({ body }) => {
+    async ({ body, empresaId }) => {
       await db.transaction(async (tx) => {
         for (const [i, id] of body.ids.entries()) {
-          await tx.update(regrasOrigem).set({ prioridade: (i + 1) * 10 }).where(eq(regrasOrigem.id, id));
+          await tx.update(regrasOrigem).set({ prioridade: (i + 1) * 10 }).where(and(eq(regrasOrigem.id, id), eq(regrasOrigem.empresaId, empresaId)));
         }
       });
       return { ok: true };
     },
     { body: t.Object({ ids: t.Array(t.String({ format: "uuid" })) }) },
   )
-  .post("/reaplicar", () => reaplicarRegras());
-
-/** Dicionário ID → nome das etiquetas da plataforma, por empresa */
-export const rotasDicionario = new Elysia({ prefix: "/api/empresas/:id/etiquetas-plataforma" })
-  .use(protegido())
-  .get(
-    "/",
-    ({ params }) =>
-      db
-        .select({ id: dicionarioEtiquetas.idExterno, nome: dicionarioEtiquetas.nome })
-        .from(dicionarioEtiquetas)
-        .where(eq(dicionarioEtiquetas.empresaId, params.id))
-        .orderBy(asc(dicionarioEtiquetas.nome)),
-    { params: paramsId },
-  )
-  /** Importa a lista exportada da plataforma: [{ "id": "706325", "name": "Grow" }, ...] */
-  .post(
-    "/",
-    async ({ params, body, set }) => {
-      const itens = body.itens
-        .map((i) => ({ id: String(i.id ?? "").trim(), nome: String(i.name ?? i.nome ?? "").trim() }))
-        .filter((i) => i.id && i.nome);
-      if (!itens.length) {
-        set.status = 400;
-        return { erro: "Nenhuma etiqueta válida. O formato esperado é uma lista com id e name." };
-      }
-      await db.transaction(async (tx) => {
-        for (let i = 0; i < itens.length; i += 500) {
-          await tx
-            .insert(dicionarioEtiquetas)
-            .values(itens.slice(i, i + 500).map((x) => ({ empresaId: params.id, idExterno: x.id, nome: x.nome })))
-            .onConflictDoUpdate({
-              target: [dicionarioEtiquetas.empresaId, dicionarioEtiquetas.idExterno],
-              set: { nome: sql`excluded.nome`, atualizadoEm: new Date() },
-            });
-        }
-      });
-      const reaplicado = await reaplicarRegras(params.id);
-      return { ok: true, importadas: itens.length, ...reaplicado };
-    },
-    {
-      params: paramsId,
-      body: t.Object({ itens: t.Array(t.Object({ id: t.Union([t.String(), t.Number()]), name: t.Optional(t.String()), nome: t.Optional(t.String()) })) }),
-    },
-  );
-
+  .post("/reaplicar", ({ empresaId }) => reaplicarRegras(empresaId));

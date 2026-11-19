@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1794346505670,
-      "tag": "0000_inicial",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1794419796664,
-      "tag": "0001_evento_capturado",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1794423672788,
-      "tag": "0002_plataforma_regras",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1794810000000,
-      "tag": "0003_regra_ads_clicked",
+      "when": 1795102992143,
+      "tag": "0000_saas_inicial",
       "breakpoints": true
     }
   ]

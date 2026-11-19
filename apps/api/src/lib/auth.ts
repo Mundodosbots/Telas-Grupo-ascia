@@ -1,19 +1,26 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { db } from "../db/client";
-import { usuarios } from "../db/schema";
+import { empresas, usuarios } from "../db/schema";
 import { env } from "../env";
+import { ehUuid } from "./util";
+
+export type Papel = "superadmin" | "admin" | "gerente";
 
 export type UsuarioSessao = {
   id: string;
   nome: string;
   email: string;
-  papel: "master" | "gerente";
+  papel: Papel;
+  /** nulo para superadmin */
+  empresaId: string | null;
 };
 
 export const COOKIE_SESSAO = "sessao";
 export const DURACAO_SESSAO_S = 60 * 60 * 24 * 7;
+/** Superadmin escolhe em qual empresa está trabalhando por este cabeçalho */
+export const CABECALHO_EMPRESA = "x-empresa";
 
 function assinar(dados: string): string {
   return createHmac("sha256", env.JWT_SECRET).update(dados).digest("base64url");
@@ -21,9 +28,9 @@ function assinar(dados: string): string {
 
 /** Token de sessão: base64url({sub,exp}).assinatura */
 export function criarTokenSessao(usuarioId: string): string {
-  const corpo = Buffer.from(
-    JSON.stringify({ sub: usuarioId, exp: Math.floor(Date.now() / 1000) + DURACAO_SESSAO_S }),
-  ).toString("base64url");
+  const corpo = Buffer.from(JSON.stringify({ sub: usuarioId, exp: Math.floor(Date.now() / 1000) + DURACAO_SESSAO_S })).toString(
+    "base64url",
+  );
   return `${corpo}.${assinar(corpo)}`;
 }
 
@@ -43,13 +50,7 @@ export function lerTokenSessao(token: string): string | null {
 }
 
 export function opcoesCookie() {
-  return {
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: env.COOKIE_SECURE,
-    path: "/",
-    maxAge: DURACAO_SESSAO_S,
-  };
+  return { httpOnly: true, sameSite: "lax" as const, secure: env.COOKIE_SECURE, path: "/", maxAge: DURACAO_SESSAO_S };
 }
 
 export async function usuarioDoCookie(token: unknown): Promise<UsuarioSessao | null> {
@@ -58,27 +59,46 @@ export async function usuarioDoCookie(token: unknown): Promise<UsuarioSessao | n
   if (!id) return null;
   const [u] = await db.select().from(usuarios).where(eq(usuarios.id, id));
   if (!u || !u.ativo) return null;
-  return { id: u.id, nome: u.nome, email: u.email, papel: u.papel };
+  // Empresa desativada bloqueia os usuários dela
+  if (u.empresaId) {
+    const [e] = await db.select({ id: empresas.id }).from(empresas).where(and(eq(empresas.id, u.empresaId), eq(empresas.ativo, true)));
+    if (!e) return null;
+  }
+  return { id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId };
 }
+
+const NIVEL: Record<Papel, number> = { gerente: 1, admin: 2, superadmin: 3 };
 
 /**
  * Protege as rotas registradas DEPOIS dele no mesmo módulo.
- * protegido()          → qualquer usuário logado
- * protegido("master")  → só o master
+ *   protegido()                         → qualquer usuário logado, sem empresa (ex.: /auth/eu)
+ *   protegido({ empresa: true })        → rotas de dados: injeta `empresaId` (a do usuário, ou a escolhida pelo superadmin)
+ *   protegido({ papel: "admin", ... })  → exige administrador da empresa (ou superadmin)
+ *   protegido({ papel: "superadmin" })  → só superadmin
  */
-export function protegido(papel?: "master") {
+export function protegido(opcoes: { papel?: Papel; empresa?: boolean } = {}) {
   return new Elysia()
-    .derive({ as: "scoped" }, async ({ cookie }) => ({
-      usuario: (await usuarioDoCookie(cookie[COOKIE_SESSAO]?.value)) as UsuarioSessao,
-    }))
-    .onBeforeHandle({ as: "scoped" }, ({ usuario, set }) => {
+    .derive({ as: "scoped" }, async ({ cookie, headers }) => {
+      const usuario = (await usuarioDoCookie(cookie[COOKIE_SESSAO]?.value)) as UsuarioSessao;
+      let empresaId = usuario?.empresaId ?? null;
+      if (usuario?.papel === "superadmin") {
+        const escolhida = headers[CABECALHO_EMPRESA];
+        empresaId = ehUuid(escolhida) ? escolhida : null;
+      }
+      return { usuario, empresaId: empresaId as string };
+    })
+    .onBeforeHandle({ as: "scoped" }, ({ usuario, empresaId, set }) => {
       if (!usuario) {
         set.status = 401;
         return { erro: "Não autenticado" };
       }
-      if (papel === "master" && usuario.papel !== "master") {
+      if (opcoes.papel && NIVEL[usuario.papel] < NIVEL[opcoes.papel]) {
         set.status = 403;
-        return { erro: "Apenas o usuário master pode fazer isso" };
+        return { erro: opcoes.papel === "superadmin" ? "Apenas o superadmin pode fazer isso" : "Apenas administradores podem fazer isso" };
+      }
+      if (opcoes.empresa && !empresaId) {
+        set.status = 400;
+        return { erro: "Escolha uma empresa", codigo: "SEM_EMPRESA" };
       }
     });
 }

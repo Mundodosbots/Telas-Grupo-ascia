@@ -104,7 +104,6 @@ const STATUS: Record<StatusClassificacao, { rotulo: string; classe: string; Icon
   pendente: { rotulo: "Na fila da IA", classe: "bg-surface-2 text-ink-2", Icone: CircleDashed },
   processando: { rotulo: "IA analisando", classe: "bg-accent-soft text-accent-ink", Icone: Loader2 },
   classificado: { rotulo: "Classificado pela IA", classe: "bg-good-soft text-good", Icone: CheckCircle2 },
-  revisar: { rotulo: "A revisar", classe: "bg-warn-soft text-warn", Icone: AlertTriangle },
   erro: { rotulo: "Falha da IA", classe: "bg-bad-soft text-bad", Icone: XCircle },
   manual: { rotulo: "Conferido", classe: "bg-accent-soft text-accent-ink", Icone: Hand },
 };

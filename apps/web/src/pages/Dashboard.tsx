@@ -1,310 +1,263 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowRight } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, qs, type Dashboard } from "../api";
-import { BarraParticipacao, ListaBarras } from "../components/Barras";
+import { api, qs, type Grupo, type Painel } from "../api";
+import { ListaBarras } from "../components/Barras";
 import { BarraFiltros } from "../components/Filtros";
 import { Titulo } from "../components/Layout";
-import { Alerta, Cartao, Carregando, Ponto, Vazio } from "../components/ui";
-import { useEmpresas, useFiltros, useOrigens } from "../hooks";
-import { diaCurto, diasEntre, numero, pct } from "../lib/formato";
+import { Alerta, Cartao, Carregando, cx, Vazio } from "../components/ui";
+import { useAuth } from "../auth";
+import { useChatbots, useFiltros } from "../hooks";
+import { diaCurto, diasEntre, duracao, numero, porcento } from "../lib/formato";
+
+export function usePainel() {
+  const { consulta } = useFiltros();
+  const { empresa } = useAuth();
+  const q = qs(consulta);
+  return useQuery({
+    queryKey: ["painel", empresa?.id, q],
+    queryFn: () => api<Painel>(`/painel${q}`),
+    placeholderData: (anterior) => anterior,
+    enabled: !!empresa,
+  });
+}
 
 export function PaginaDashboard() {
+  const q = usePainel();
+  return (
+    <>
+      <Titulo titulo="Painel" descricao="Leads, tempos de atendimento e de onde vêm os clientes. Tempos contam só o horário de atendimento de cada chatbot." />
+      <BarraFiltros extras={["atendente", "time", "departamento", "origem", "cidade"]} />
+      {q.error ? (
+        <Alerta>{(q.error as Error).message}</Alerta>
+      ) : !q.data ? (
+        <Carregando />
+      ) : q.data.resumo.total === 0 ? (
+        <Cartao>
+          <Vazio titulo="Nenhum atendimento neste filtro">
+            Os atendimentos aparecem quando a plataforma manda o envio no fim da conversa. Confira em{" "}
+            <Link className="text-accent underline" to="/eventos">
+              Envios recebidos
+            </Link>{" "}
+            e em{" "}
+            <Link className="text-accent underline" to="/chatbots">
+              Chatbots
+            </Link>
+            .
+          </Vazio>
+        </Cartao>
+      ) : (
+        <Conteudo d={q.data} />
+      )}
+    </>
+  );
+}
+
+function Conteudo({ d }: { d: Painel }) {
   const { filtros, params } = useFiltros();
-  const empresas = useEmpresas();
-  const origens = useOrigens();
-
-  const consulta = qs({
-    empresa_id: filtros.empresa_id,
-    inicio: filtros.inicio,
-    fim: filtros.fim,
-    vendedor_id: filtros.vendedor_id,
-    origem_id: filtros.origem_id,
-  });
-  const q = useQuery({
-    queryKey: ["dashboard", consulta],
-    queryFn: () => api<Dashboard>(`/dashboard${consulta}`),
-    refetchInterval: 60_000,
-    placeholderData: (anterior) => anterior,
-  });
-
-  /** Link para a lista de atendimentos mantendo o filtro atual */
-  const linkLista = (extra: Record<string, string>) => {
+  const chatbots = useChatbots();
+  const r = d.resumo;
+  const link = (extra: Record<string, string>) => {
     const p = new URLSearchParams(params);
     for (const [k, v] of Object.entries(extra)) p.set(k, v);
     p.delete("pagina");
     return `/atendimentos?${p}`;
   };
+  const linhas = (g: Grupo[], param?: string, comCor = false) =>
+    g.map((x) => ({
+      chave: x.chave ?? "nenhum",
+      rotulo: x.rotulo,
+      valor: x.total,
+      sub: x.humano ? `${porcento(x.ate30, x.comTempo)} em até 30 min · ${duracao(x.tempoAteHumano)}` : "só robô",
+      ...(comCor ? { cor: x.cor ?? "#b4b8c5" } : {}),
+      link: param && x.chave ? link({ [param]: x.chave }) : undefined,
+    }));
 
   return (
-    <>
-      <Titulo titulo="Painel" descricao="Atendimentos atribuídos pelo chatbot. Cada atendimento conta para o último vendedor que o recebeu." />
-      <BarraFiltros extras={["vendedor", "origem"]} />
-      {q.isLoading || !q.data ? (
-        q.error ? <Alerta>{(q.error as Error).message}</Alerta> : <Carregando />
-      ) : q.data.resumo.total === 0 ? (
-        <Cartao>
-          <Vazio titulo="Nenhum atendimento neste filtro">
-            Quando o chatbot atribuir conversas a vendedores, elas aparecem aqui. Confira em <Link className="text-accent underline" to="/eventos">Eventos recebidos</Link> se o webhook está chegando.
-          </Vazio>
-        </Cartao>
-      ) : (
-        <Conteudo d={q.data} filtros={filtros} empresas={empresas.data ?? []} origens={origens.data ?? []} linkLista={linkLista} />
-      )}
-    </>
-  );
-}
-
-function Conteudo({
-  d,
-  filtros,
-  empresas,
-  origens,
-  linkLista,
-}: {
-  d: Dashboard;
-  filtros: ReturnType<typeof useFiltros>["filtros"];
-  empresas: { id: string; nome: string; cor: string }[];
-  origens: { id: string; nome: string; cor: string }[];
-  linkLista: (extra: Record<string, string>) => string;
-}) {
-  const r = d.resumo;
-  const empresasNoGrafico = filtros.empresa_id ? empresas.filter((e) => e.id === filtros.empresa_id) : empresas;
-
-  // Série diária com dias vazios preenchidos (eixo de tempo contínuo)
-  const serie = useMemo(() => {
-    const dias = d.serie.map((s) => s.dia);
-    const inicio = filtros.inicio ?? dias[0];
-    const fim = filtros.fim ?? dias[dias.length - 1];
-    if (!inicio || !fim) return [];
-    const mapa = new Map<string, Record<string, number | string>>();
-    for (const dia of diasEntre(inicio, fim)) {
-      const linha: Record<string, number | string> = { dia };
-      for (const e of empresasNoGrafico) linha[e.id] = 0;
-      mapa.set(dia, linha);
-    }
-    for (const s of d.serie) {
-      const linha = mapa.get(s.dia);
-      if (linha) linha[s.empresaId] = s.total;
-    }
-    return [...mapa.values()];
-  }, [d.serie, filtros.inicio, filtros.fim, empresasNoGrafico]);
-
-  return (
-    <div className="grid gap-4">
-      {/* Números principais */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <Numero rotulo="Atendimentos" valor={r.total} destaque />
-        <Numero rotulo="Vendedores atendendo" valor={r.vendedores} />
-        <Numero rotulo="Repassados entre vendedores" valor={r.reatribuidos} detalhe={pct(r.reatribuidos, r.total)} />
-        <Numero rotulo="Sem origem identificada" valor={r.semOrigem} detalhe={pct(r.semOrigem, r.total)} link={linkLista({ origem: "nenhuma" })} />
-        <Numero
-          rotulo="Aguardando revisão"
-          valor={r.aRevisar}
-          detalhe={r.pendentes ? `+${numero(r.pendentes)} na fila da IA` : undefined}
-          alerta={r.aRevisar > 0}
-          link="/revisar"
-        />
-      </div>
-
-      {!filtros.empresa_id && d.porEmpresa.length > 1 && (
-        <Cartao titulo="Por empresa">
-          <BarraParticipacao partes={d.porEmpresa.map((e) => ({ chave: e.id, rotulo: e.nome, valor: e.total, cor: e.cor }))} />
-        </Cartao>
-      )}
+    <div className="grid gap-5">
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Indicador rotulo="Atendimentos" valor={numero(r.total)} sub={`${numero(r.leadsNovos)} leads novos`} />
+        <Indicador rotulo="Foram para humano" valor={numero(r.humano)} sub={`${porcento(r.humano, r.total)} do total`} />
+        <Indicador rotulo="Sem atendimento humano" valor={numero(r.semHumano)} sub={`${porcento(r.semHumano, r.humano)} de quem foi para a fila`} tom={r.semHumano ? "ruim" : undefined} />
+        <Indicador rotulo="Humano em até 30 min" valor={porcento(r.ate30, r.comTempo)} sub={`${numero(r.ate30)} de ${numero(r.comTempo)} atendidos`} tom="bom" />
+        <Indicador rotulo="Robô → humano (média)" valor={duracao(r.tempoAteHumano)} sub="da transferência à 1ª resposta" />
+        <Indicador rotulo="1ª resposta (média)" valor={duracao(r.tempoPrimeiraResposta)} sub="da 1ª mensagem do cliente" />
+        <Indicador rotulo="Resposta do atendente (média)" valor={duracao(r.tempoMedioResposta)} sub={`${numero(r.respostas)} respostas medidas`} />
+        <Indicador rotulo="Esperas acima de 30 min" valor={numero(r.esperas30)} sub={`${numero(r.semResposta)} mensagens sem resposta`} tom={r.esperas30 ? "ruim" : undefined} />
+      </section>
 
       <Cartao titulo="Atendimentos por dia">
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={serie} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} barCategoryGap="18%">
-              <CartesianGrid vertical={false} stroke="var(--grid)" />
-              <XAxis dataKey="dia" tickFormatter={diaCurto} tickLine={false} axisLine={{ stroke: "var(--line)" }} minTickGap={18} />
-              <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={44} />
-              <Tooltip
-                cursor={{ fill: "var(--surface-2)" }}
-                contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12, color: "var(--ink)" }}
-                labelFormatter={(v) => diaCurto(String(v))}
-                formatter={(v: number, chave) => [numero(v), empresas.find((e) => e.id === chave)?.nome ?? chave]}
-              />
-              {empresasNoGrafico.length > 1 && (
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} formatter={(chave) => empresas.find((e) => e.id === chave)?.nome ?? chave} />
-              )}
-              {empresasNoGrafico.map((e, i) => (
-                <Bar
-                  key={e.id}
-                  dataKey={e.id}
-                  stackId="dia"
-                  fill={e.cor}
-                  stroke="var(--surface)"
-                  strokeWidth={1}
-                  radius={i === empresasNoGrafico.length - 1 ? [4, 4, 0, 0] : 0}
-                  maxBarSize={36}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        <SeriePorDia d={d} inicio={filtros.inicio} fim={filtros.fim} chatbots={chatbots.data ?? []} />
       </Cartao>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Cartao titulo="De onde vieram os clientes">
-          <ListaBarras
-            total={r.total}
-            linhas={d.porOrigem.map((o) => ({
-              chave: o.id ?? "nenhuma",
-              rotulo: o.nome ?? "Sem origem identificada",
-              valor: o.total,
-              ponto: o.cor ?? "var(--muted)",
-              link: linkLista({ origem: o.id ?? "nenhuma" }),
-            }))}
-          />
+      <Cartao
+        titulo="Atendentes"
+        acao={
+          <Link to={`/atendentes?${params}`} className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+            Ranking completo <ArrowRight className="size-3.5" />
+          </Link>
+        }
+      >
+        <TabelaAtendentes linhas={d.porAtendente.slice(0, 8)} link={(id) => link({ atendente: id })} />
+      </Cartao>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Cartao titulo="Por departamento">
+          <ListaBarras linhas={linhas(d.porDepartamento, "departamento", true)} total={r.total} />
         </Cartao>
-        <Cartao
-          titulo="Atendimentos por vendedor"
-          acao={
-            !filtros.empresa_id && (
-              <div className="flex flex-wrap gap-3">
-                {empresas.map((e) => (
-                  <span key={e.id} className="flex items-center gap-1 text-[11px] text-muted">
-                    <Ponto cor={e.cor} className="size-2" />
-                    {e.nome.replace("Asia ", "")}
-                  </span>
-                ))}
-              </div>
-            )
-          }
-        >
-          <ListaBarras
-            total={r.total}
-            max={15}
-            linhas={d.porVendedor.map((v) => ({
-              chave: v.id,
-              rotulo: v.nome,
-              sub: !filtros.empresa_id ? v.empresaNome : undefined,
-              valor: v.total,
-              cor: v.empresaCor,
-              link: linkLista({ vendedor: v.id }),
-            }))}
-          />
+        <Cartao titulo="Por origem">
+          <ListaBarras linhas={linhas(d.porOrigem, "origem", true)} total={r.total} />
+        </Cartao>
+        <Cartao titulo="Por cidade">
+          <ListaBarras linhas={linhas(d.porCidade)} total={r.total} />
+        </Cartao>
+        <Cartao titulo="Por canal de entrada">
+          <ListaBarras linhas={linhas(d.porCanal)} total={r.total} />
+        </Cartao>
+        <Cartao titulo="Anúncios por plataforma">
+          <ListaBarras linhas={linhas(d.porAnuncio)} total={r.total} />
+        </Cartao>
+        <Cartao titulo="Por fonte do contato">
+          <ListaBarras linhas={linhas(d.porFonte)} total={r.total} />
         </Cartao>
       </div>
 
-      <MatrizVendedorOrigem d={d} origensCadastro={origens} linkLista={linkLista} />
-
-      {d.porEtiqueta.length > 0 && (
-        <Cartao titulo="Etiquetas mais frequentes">
-          <ListaBarras
-            total={r.total}
-            linhas={d.porEtiqueta.map((e) => ({ chave: e.id, rotulo: e.nome, valor: e.total, ponto: e.cor, link: linkLista({ etiqueta: e.id }) }))}
-          />
-        </Cartao>
-      )}
+      <Cartao titulo="Quando os clientes chegam" acao={<span className="text-xs text-muted">1ª mensagem do cliente, por dia da semana e hora</span>}>
+        <MapaHorarios horarios={d.horarios} />
+      </Cartao>
     </div>
   );
 }
 
-function Numero({
-  rotulo,
-  valor,
-  detalhe,
-  destaque,
-  alerta,
-  link,
-}: {
-  rotulo: string;
-  valor: number;
-  detalhe?: string;
-  destaque?: boolean;
-  alerta?: boolean;
-  link?: string;
-}) {
-  const corpo = (
-    <>
-      <p className="flex items-center gap-1.5 text-xs text-ink-2">
-        {alerta && <AlertTriangle className="size-3.5 text-warn" />}
-        {rotulo}
-      </p>
-      <p className={destaque ? "text-3xl font-semibold tracking-tight" : "text-2xl font-semibold tracking-tight"}>{numero(valor)}</p>
-      <p className="flex items-center gap-1 text-xs text-muted min-h-4">
-        {detalhe}
-        {link && <ArrowRight className="ml-auto size-3.5" />}
-      </p>
-    </>
-  );
-  const classe = "grid gap-0.5 rounded-xl border border-line bg-surface px-4 py-3 min-w-0";
-  return link ? (
-    <Link to={link} className={classe + " hover:border-muted transition-colors"}>
-      {corpo}
-    </Link>
-  ) : (
-    <div className={classe}>{corpo}</div>
+export function Indicador({ rotulo, valor, sub, tom }: { rotulo: string; valor: ReactNode; sub?: string; tom?: "bom" | "ruim" }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <p className="text-xs text-muted">{rotulo}</p>
+      <p className={cx("mt-0.5 text-2xl font-semibold tabular tracking-tight", tom === "ruim" && "text-bad", tom === "bom" && "text-good")}>{valor}</p>
+      {sub && <p className="mt-0.5 text-xs text-muted">{sub}</p>}
+    </div>
   );
 }
 
-/** Tabela vendedor × origem: "quantos do Carlos vieram de anúncio?" Intensidade = quantidade (um só tom). */
-function MatrizVendedorOrigem({
-  d,
-  origensCadastro,
-  linkLista,
-}: {
-  d: Dashboard;
-  origensCadastro: { id: string; nome: string; cor: string }[];
-  linkLista: (extra: Record<string, string>) => string;
-}) {
-  const colunas = d.porOrigem.slice(0, 8);
-  const celula = new Map(d.vendedorOrigem.map((c) => [`${c.vendedorId}|${c.origemId ?? "nenhuma"}`, c.total]));
-  const maior = Math.max(...d.vendedorOrigem.map((c) => c.total), 1);
-  const linhas = d.porVendedor.slice(0, 25);
-  if (!linhas.length || !colunas.length) return null;
-  const nomeOrigem = (id: string | null) => (id ? (origensCadastro.find((o) => o.id === id)?.nome ?? "—") : "Sem origem");
-
+export function TabelaAtendentes({ linhas, link, transferencias }: { linhas: Grupo[]; link: (id: string) => string; transferencias?: Painel["transferencias"] }) {
+  if (!linhas.length) return <p className="py-6 text-center text-sm text-muted">Nenhum atendente no período</p>;
+  const tr = new Map((transferencias ?? []).map((t) => [t.chave, t]));
   return (
-    <Cartao titulo="Vendedor × origem">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] border-separate border-spacing-[2px] text-[13px]">
-          <thead>
-            <tr>
-              <th className="sticky left-0 bg-surface px-2 py-1.5 text-left text-xs font-medium text-muted">Vendedor</th>
-              {colunas.map((o) => (
-                <th key={o.id ?? "nenhuma"} className="px-2 py-1.5 text-center text-xs font-medium text-muted" title={nomeOrigem(o.id)}>
-                  <span className="line-clamp-2">{nomeOrigem(o.id)}</span>
-                </th>
-              ))}
-              <th className="px-2 py-1.5 text-right text-xs font-medium text-muted">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {linhas.map((v) => (
-              <tr key={v.id}>
-                <td className="sticky left-0 bg-surface px-2 py-1.5">
-                  <Link to={linkLista({ vendedor: v.id })} className="flex items-center gap-2 hover:underline">
-                    <Ponto cor={v.empresaCor} className="size-2" />
-                    <span className="truncate max-w-44">{v.nome}</span>
-                  </Link>
+    <div className="-mx-4 overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="border-b border-line text-left text-xs text-muted">
+            <th className="px-4 py-2 font-medium">Atendente</th>
+            <th className="px-3 py-2 text-right font-medium">Atendimentos</th>
+            <th className="px-3 py-2 text-right font-medium">Robô → humano</th>
+            <th className="px-3 py-2 text-right font-medium">Resposta média</th>
+            <th className="px-3 py-2 text-right font-medium">Até 30 min</th>
+            <th className="px-3 py-2 text-right font-medium">Esperas &gt; 30</th>
+            <th className="px-3 py-2 text-right font-medium">Sem resposta</th>
+            {transferencias && <th className="px-4 py-2 text-right font-medium">Transferiu / recebeu</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((a) => {
+            const t = a.chave ? tr.get(a.chave) : undefined;
+            return (
+              <tr key={a.chave ?? "sem"} className="border-b border-line/60 last:border-0 hover:bg-surface-2">
+                <td className="px-4 py-2">
+                  {a.chave ? (
+                    <Link to={link(a.chave)} className="font-medium text-ink hover:underline">
+                      {a.rotulo}
+                    </Link>
+                  ) : (
+                    <span className="text-muted">{a.rotulo}</span>
+                  )}
+                  {a.timeNome && <span className="ml-2 text-xs text-muted">{a.timeNome}</span>}
                 </td>
-                {colunas.map((o) => {
-                  const n = celula.get(`${v.id}|${o.id ?? "nenhuma"}`) ?? 0;
-                  const alfa = n ? 0.12 + 0.68 * (n / maior) : 0;
-                  return (
-                    <td
-                      key={o.id ?? "nenhuma"}
-                      className="rounded-[4px] px-2 py-1.5 text-center tabular"
-                      style={{ background: n ? `color-mix(in srgb, var(--accent) ${Math.round(alfa * 100)}%, transparent)` : "var(--surface-2)" }}
-                      title={`${v.nome} · ${nomeOrigem(o.id)}: ${n}`}
-                    >
-                      <span className={n ? (alfa > 0.5 ? "font-medium text-white" : "font-medium text-ink") : "text-muted"}>{n || "·"}</span>
-                    </td>
-                  );
-                })}
-                <td className="px-2 py-1.5 text-right font-semibold tabular">{numero(v.total)}</td>
+                <td className="px-3 py-2 text-right tabular">{numero(a.total)}</td>
+                <td className="px-3 py-2 text-right tabular">{duracao(a.tempoAteHumano)}</td>
+                <td className="px-3 py-2 text-right tabular">{duracao(a.tempoMedioResposta)}</td>
+                <td className="px-3 py-2 text-right tabular">{porcento(a.ate30, a.comTempo)}</td>
+                <td className={cx("px-3 py-2 text-right tabular", a.esperas30 > 0 && "text-bad")}>{numero(a.esperas30)}</td>
+                <td className="px-3 py-2 text-right tabular">{numero(a.semResposta)}</td>
+                {transferencias && (
+                  <td className="px-4 py-2 text-right tabular">
+                    {numero(t?.feitas ?? 0)} / {numero(t?.recebidas ?? 0)}
+                  </td>
+                )}
               </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SeriePorDia({ d, inicio, fim, chatbots }: { d: Painel; inicio?: string; fim?: string; chatbots: { id: string; nome: string; cor: string }[] }) {
+  const dados = useMemo(() => {
+    const dias = inicio && fim ? diasEntre(inicio, fim) : [...new Set(d.serie.map((s) => s.dia))].sort();
+    return dias.map((dia) => {
+      const linha: Record<string, number | string> = { dia: diaCurto(dia) };
+      for (const c of chatbots) linha[c.id] = d.serie.filter((s) => s.dia === dia && s.chatbotId === c.id).reduce((s, x) => s + x.total, 0);
+      return linha;
+    });
+  }, [d, inicio, fim, chatbots]);
+  const usados = chatbots.filter((c) => d.serie.some((s) => s.chatbotId === c.id));
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={dados} margin={{ left: -18, right: 8, top: 8 }}>
+          <CartesianGrid vertical={false} stroke="var(--grid)" />
+          <XAxis dataKey="dia" tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={16} />
+          <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
+          <Tooltip cursor={{ fill: "var(--surface-2)" }} contentStyle={{ background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12 }} />
+          {usados.length > 1 && <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />}
+          {usados.map((c, i) => (
+            <Bar key={c.id} dataKey={c.id} name={c.nome} stackId="a" fill={c.cor} radius={i === usados.length - 1 ? [3, 3, 0, 0] : 0} maxBarSize={36} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const DIAS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+function MapaHorarios({ horarios }: { horarios: Painel["horarios"] }) {
+  const max = Math.max(1, ...horarios.map((h) => h.total));
+  const valor = (dia: number, hora: number) => horarios.find((h) => h.diaSemana === dia && h.hora === hora)?.total ?? 0;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[640px] border-separate border-spacing-[3px] text-[11px]">
+        <thead>
+          <tr>
+            <th />
+            {Array.from({ length: 24 }, (_, h) => (
+              <th key={h} className="font-normal text-muted tabular">
+                {h % 3 === 0 ? `${h}h` : ""}
+              </th>
             ))}
-          </tbody>
-        </table>
-      </div>
-      {d.porOrigem.length > colunas.length && <p className="pt-2 text-xs text-muted">Mostrando as {colunas.length} origens mais frequentes.</p>}
-    </Cartao>
+          </tr>
+        </thead>
+        <tbody>
+          {[1, 2, 3, 4, 5, 6, 0].map((dia) => (
+            <tr key={dia}>
+              <th className="pr-2 text-right font-normal text-muted">{DIAS[dia]}</th>
+              {Array.from({ length: 24 }, (_, h) => {
+                const v = valor(dia, h);
+                return (
+                  <td
+                    key={h}
+                    title={`${DIAS[dia]} ${h}h: ${v} atendimento(s)`}
+                    className="h-6 rounded-[3px]"
+                    style={{ background: v ? `color-mix(in oklab, var(--accent) ${15 + (v / max) * 85}%, var(--surface-2))` : "var(--surface-2)" }}
+                  />
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

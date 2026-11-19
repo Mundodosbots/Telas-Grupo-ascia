@@ -2,22 +2,43 @@ export class ErroApi extends Error {
   constructor(
     public status: number,
     message: string,
+    public codigo?: string,
   ) {
     super(message);
   }
 }
 
+/** Empresa em que o superadmin está trabalhando (usuários de empresa ignoram) */
+const CHAVE_EMPRESA = "empresa-ativa";
+export function empresaAtiva(): string | null {
+  try {
+    return localStorage.getItem(CHAVE_EMPRESA);
+  } catch {
+    return null;
+  }
+}
+export function definirEmpresaAtiva(id: string | null) {
+  try {
+    if (id) localStorage.setItem(CHAVE_EMPRESA, id);
+    else localStorage.removeItem(CHAVE_EMPRESA);
+  } catch {}
+}
+
 export async function api<T>(caminho: string, opcoes: { method?: string; body?: unknown } = {}): Promise<T> {
+  const empresa = empresaAtiva();
   const r = await fetch(`/api${caminho}`, {
     method: opcoes.method ?? "GET",
     credentials: "same-origin",
-    headers: opcoes.body !== undefined ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(opcoes.body !== undefined && { "content-type": "application/json" }),
+      ...(empresa && { "x-empresa": empresa }),
+    },
     body: opcoes.body !== undefined ? JSON.stringify(opcoes.body) : undefined,
   });
   const dados = await r.json().catch(() => null);
   if (!r.ok) {
     if (r.status === 401 && !caminho.startsWith("/auth/login")) window.dispatchEvent(new Event("sessao-expirada"));
-    throw new ErroApi(r.status, dados?.erro ?? `Erro ${r.status}`);
+    throw new ErroApi(r.status, dados?.erro ?? `Erro ${r.status}`, dados?.codigo);
   }
   return dados as T;
 }
@@ -31,92 +52,191 @@ export function qs(params: Record<string, string | number | undefined | null>): 
 
 /* ---------------- Tipos das respostas ---------------- */
 
-export type Papel = "master" | "gerente";
-export type Usuario = { id: string; nome: string; email: string; papel: Papel };
+export type Papel = "superadmin" | "admin" | "gerente";
+export type Usuario = { id: string; nome: string; email: string; papel: Papel; empresaId: string | null };
+export type EmpresaResumo = { id: string; nome: string; ativo: boolean };
+export type Perfil = { usuario: Usuario; empresas: EmpresaResumo[] };
 export type UsuarioLista = Usuario & { ativo: boolean; ultimoLoginEm: string | null; criadoEm: string };
 
-export type Empresa = {
+export type Empresa = EmpresaResumo & { slug: string; criadoEm: string; chatbots: number; usuarios: number; atendimentos: number; ultimoEvento: string | null };
+
+export type Horario = Record<string, [string, string][]>;
+export type Chatbot = {
   id: string;
   nome: string;
-  slug: string;
   cor: string;
-  ativo: boolean;
   tokenPrefixo: string | null;
   tokenGeradoEm: string | null;
-  etiquetasPlataforma?: number;
+  contaExterna: string | null;
+  fuso: string;
+  horario: Horario;
+  ativo: boolean;
+  hoje: number;
+  recusadosHoje: number;
+  ultimoEvento: string | null;
+  atendimentos: number;
 };
 
-export type Vendedor = {
+export type ItemCadastro = { id: string; nome: string; descricao: string; cor: string; ativo: boolean; uso: number };
+export type Time = { id: string; nome: string; cor: string; atendentes: number };
+export type Atendente = {
   id: string;
   nome: string;
   email: string | null;
   idExterno: string | null;
   apelidos: string[];
   ativo: boolean;
-  empresaId: string;
-  empresaNome: string;
-  empresaCor: string;
+  timeId: string | null;
+  timeNome: string | null;
+  timeCor: string | null;
   atendimentos: number;
-  ultimaAtribuicao: string | null;
+  ultimoAtendimento: string | null;
 };
 
-export type ItemCadastro = {
-  id: string;
-  nome: string;
-  descricao: string;
-  cor: string;
-  empresaId: string | null;
-  ativo: boolean;
-  uso: number;
-};
-
-export type StatusClassificacao = "pendente" | "processando" | "classificado" | "revisar" | "erro" | "manual";
+export type StatusClassificacao = "pendente" | "processando" | "classificado" | "erro" | "manual";
 export type EtiquetaMini = { id: string; nome: string; cor: string };
 
 export type AtendimentoItem = {
   id: string;
-  empresaId: string;
-  empresaNome: string;
-  empresaCor: string;
-  clienteNome: string;
-  clienteTelefone: string;
-  vendedorId: string;
-  vendedorNome: string;
+  protocolo: string | null;
+  chatbotId: string;
+  chatbotNome: string;
+  chatbotCor: string;
+  contatoNome: string;
+  contatoTelefone: string | null;
+  atendenteId: string | null;
+  atendenteNome: string | null;
   origemId: string | null;
   origemNome: string | null;
   origemCor: string | null;
-  resumo: string;
-  totalAtribuicoes: number;
-  ultimaAtribuicaoEm: string;
+  departamentoNome: string | null;
+  departamentoCor: string | null;
+  cidade: string | null;
+  canal: string | null;
+  fonte: string | null;
+  interesse: string | null;
+  resumo: string | null;
+  inicioEm: string;
+  ultimaMsgEm: string;
+  precisouHumano: boolean;
+  semHumano: boolean;
+  atendidoAte30: boolean | null;
+  tempoAteHumanoS: number | null;
+  tempoMedioRespostaS: number | null;
+  esperasAcima30: number;
+  transferencias: number;
+  leadNovo: boolean;
   status: StatusClassificacao;
-  confianca: number | null;
-  sugestao: string | null;
   etiquetas: EtiquetaMini[];
 };
+export type Pagina<T> = { total: number; pagina: number; porPagina: number; itens: T[] };
 
-export type LinhaRelatorio = {
+export type MensagemConversa = { id: string; em: string; tipo: "cliente" | "bot" | "api" | "humano"; remetente: string; texto: string };
+export type AtendimentoDetalhe = {
   id: string;
-  empresaNome: string;
-  clienteNome: string;
-  clienteTelefone: string;
-  vendedorNome: string;
+  protocolo: string | null;
+  chatbotNome: string;
+  chatbotCor: string;
+  fuso: string;
+  contato: {
+    id: string;
+    nome: string;
+    telefone: string | null;
+    cidade: string | null;
+    linkConversa: string | null;
+    criadoNaPlataformaEm: string | null;
+    etiquetas: string[];
+    campos: Record<string, string>;
+  };
+  atendenteId: string | null;
+  atendenteNome: string | null;
+  origemId: string | null;
   origemNome: string | null;
-  totalAtribuicoes: number;
-  primeiraAtribuicaoEm: string;
-  ultimaAtribuicaoEm: string;
-  status: StatusClassificacao;
-  etiquetasPlataforma: string[];
-  etiquetas: string[];
+  origemCor: string | null;
+  origemPorRegra: boolean;
+  departamentoId: string | null;
+  departamentoNome: string | null;
+  departamentoCor: string | null;
+  cidade: string | null;
+  interesse: string | null;
+  resumo: string | null;
+  fonte: string | null;
+  canal: string | null;
+  refEntrada: string | null;
+  anuncio: Record<string, string | undefined> | null;
+  inicioEm: string;
+  ultimaMsgEm: string;
+  primeiraMsgClienteEm: string | null;
+  transferenciaEm: string | null;
+  primeiraRespostaHumanaEm: string | null;
+  msgsCliente: number;
+  msgsBot: number;
+  msgsApi: number;
+  msgsHumano: number;
+  tempoAteHumanoS: number | null;
+  tempoPrimeiraRespostaS: number | null;
+  tempoMedioRespostaS: number | null;
+  tempoMaxRespostaS: number | null;
+  respostasMedidas: number;
+  esperasAcima30: number;
+  semResposta: number;
+  precisouHumano: boolean;
+  semHumano: boolean;
+  atendidoAte30: boolean | null;
+  duracaoS: number | null;
+  transferencias: number;
+  foraHorario: boolean;
+  leadNovo: boolean;
+  classificacaoStatus: StatusClassificacao;
+  classificacaoConfianca: number | null;
+  classificacaoJustificativa: string | null;
+  classificacaoErro: string | null;
+  classificadoPor: string | null;
+  etiquetas: EtiquetaMini[];
+  humanos: { atendenteId: string; nome: string; ordem: number; primeiraMsgEm: string; mensagens: number }[];
+  conversa: MensagemConversa[];
+  outros: { id: string; protocolo: string | null; inicioEm: string; origemNome: string | null; atendenteNome: string | null }[];
 };
-export type ListaRelatorio = { total: number; limite: number; itens: LinhaRelatorio[] };
 
-export type Pagina<T> ={ total: number; pagina: number; porPagina: number; itens: T[] };
+/** Métricas iguais para o total e para cada agrupamento do painel */
+export type Metricas = {
+  total: number;
+  humano: number;
+  semHumano: number;
+  ate30: number;
+  comTempo: number;
+  tempoAteHumano: number | null;
+  tempoPrimeiraResposta: number | null;
+  tempoMedioResposta: number | null;
+  tempoMaxResposta: number | null;
+  esperas30: number;
+  respostas: number;
+  semResposta: number;
+  transferencias: number;
+  leadsNovos: number;
+  foraHorario: number;
+  duracao: number | null;
+};
+export type Grupo = Metricas & { chave: string | null; rotulo: string; cor?: string | null; timeNome?: string | null };
+export type Painel = {
+  resumo: Metricas;
+  porChatbot: Grupo[];
+  porDepartamento: Grupo[];
+  porCidade: Grupo[];
+  porCanal: Grupo[];
+  porFonte: Grupo[];
+  porOrigem: Grupo[];
+  porAnuncio: Grupo[];
+  porAtendente: Grupo[];
+  porTime: Grupo[];
+  transferencias: { chave: string; rotulo: string; feitas: number; recebidas: number; participou: number }[];
+  serie: { dia: string; chatbotId: string; total: number; humano: number; semHumano: number }[];
+  horarios: { diaSemana: number; hora: number; total: number }[];
+};
 
 export type Regra = {
   id: string;
-  empresaId: string | null;
-  empresaNome: string | null;
-  campo: "etiqueta" | "fonte" | "resumo";
+  campo: "etiqueta" | "fonte" | "canal" | "anuncio" | "texto";
   comparacao: "igual" | "contem";
   valor: string;
   origemId: string;
@@ -127,79 +247,30 @@ export type Regra = {
   uso: number;
 };
 
-export type AtendimentoDetalhe = Omit<AtendimentoItem, "status"> & {
-  status: StatusClassificacao;
-  etiquetasPlataforma: string[];
-  camposPlataforma: Record<string, string>;
-  origemPorRegra: boolean;
-  clienteIdExterno: string | null;
-  clienteId: string;
-  conversaId: string | null;
-  fonteInformada: string | null;
-  primeiraAtribuicaoEm: string;
-  justificativa: string | null;
-  erro: string | null;
-  tentativas: number;
-  classificadoEm: string | null;
-  classificadoPor: string | null;
-  linhaDoTempo: {
-    id: string;
-    vendedorId: string;
-    vendedorNome: string;
-    resumo: string;
-    fonte: string | null;
-    dadosExtras: Record<string, unknown>;
-    atribuidoEm: string;
-    eventoId: string | null;
-    payload: unknown;
-  }[];
-  outrosAtendimentos: { id: string; ultimaAtribuicaoEm: string; vendedorNome: string }[];
-};
-
-export type Dashboard = {
-  resumo: {
-    total: number;
-    aRevisar: number;
-    pendentes: number;
-    semOrigem: number;
-    reatribuidos: number;
-    classificadosIa: number;
-    vendedores: number;
-  };
-  porEmpresa: { id: string; nome: string; cor: string; total: number }[];
-  porVendedor: {
-    id: string;
-    nome: string;
-    empresaId: string;
-    empresaNome: string;
-    empresaCor: string;
-    total: number;
-    reatribuidos: number;
-  }[];
-  porOrigem: { id: string | null; nome: string | null; cor: string | null; total: number }[];
-  porEtiqueta: { id: string; nome: string; cor: string; total: number }[];
-  serie: { dia: string; empresaId: string; total: number }[];
-  vendedorOrigem: { vendedorId: string; origemId: string | null; total: number }[];
-};
-
 export type StatusSistema = {
   agenteAtivo: boolean;
   modelo: string | null;
   fusoHorario: string;
   pendentes: number;
-  aRevisar: number;
-  ultimoEvento: { recebidoEm: string; status: string } | null;
+  erros: number;
   ultimaAlteracao: string | null;
+  ultimoEvento: { recebidoEm: string; status: string } | null;
 };
 
 export type Evento = {
   id: string;
-  empresaNome: string | null;
-  empresaCor: string | null;
-  idExterno: string | null;
-  status: "processado" | "rejeitado" | "duplicado" | "capturado";
+  chatbotNome: string | null;
+  chatbotCor: string | null;
+  contatoId: string | null;
+  contatoNome: string | null;
+  status: "processado" | "rejeitado" | "capturado";
   erro: string | null;
-  atendimentoId: string | null;
+  resultado: Record<string, unknown> | null;
+  tamanhoBytes: number;
   recebidoEm: string;
-  payload: unknown;
 };
+
+export type ListaRelatorio = { total: number; limite: number; itens: (Omit<AtendimentoItem, "etiquetas"> & { etiquetas: string[] })[] };
+
+export type Grafico = { tipo: "barras" | "linha" | "pizza"; titulo: string; unidade: string; dados: { rotulo: string; valor: number }[] };
+export type RespostaAssistente = { texto: string; grafico: Grafico | null };

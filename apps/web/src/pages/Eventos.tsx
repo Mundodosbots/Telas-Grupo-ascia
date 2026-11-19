@@ -1,95 +1,103 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { Copy } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api, qs, type Evento, type Pagina } from "../api";
+import { useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
-import { BotaoCopiar, Cartao, Carregando, cx, Paginacao, Ponto, Selecao, Vazio } from "../components/ui";
-import { dataHora } from "../lib/formato";
+import { Botao, Cartao, Carregando, cx, Paginacao, Ponto, Selecao, Vazio } from "../components/ui";
+import { useChatbots } from "../hooks";
+import { dataHora, numero } from "../lib/formato";
 
 const STATUS: Record<Evento["status"], { rotulo: string; classe: string }> = {
   processado: { rotulo: "processado", classe: "bg-good-soft text-good" },
-  duplicado: { rotulo: "duplicado", classe: "bg-surface-2 text-ink-2" },
-  rejeitado: { rotulo: "rejeitado", classe: "bg-bad-soft text-bad" },
+  rejeitado: { rotulo: "recusado", classe: "bg-bad-soft text-bad" },
   capturado: { rotulo: "captura de teste", classe: "bg-accent-soft text-accent-ink" },
 };
 
-/** Tudo que chegou pelo webhook, inclusive o que deu erro. Serve para acertar a integração com o bot. */
+/** Tudo o que chegou pelo webhook, inclusive o que deu erro — para acertar a integração */
 export function PaginaEventos() {
+  const { empresa } = useAuth();
+  const chatbots = useChatbots();
   const [status, setStatus] = useState("");
+  const [chatbot, setChatbot] = useState("");
   const [pagina, setPagina] = useState(1);
-  const [aberto, setAberto] = useState<string | null>(null);
-  const consulta = qs({ status, pagina, por_pagina: 30 });
+  const [copiado, setCopiado] = useState<string | null>(null);
+  const consulta = qs({ status, chatbot_id: chatbot, pagina, por_pagina: 30 });
   const q = useQuery({
-    queryKey: ["eventos", consulta],
+    queryKey: ["eventos", empresa?.id, consulta],
     queryFn: () => api<Pagina<Evento>>(`/eventos${consulta}`),
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
+    enabled: !!empresa,
   });
+  async function copiarJson(id: string) {
+    const json = await api<unknown>(`/eventos/${id}`);
+    await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+    setCopiado(id);
+    setTimeout(() => setCopiado(null), 2000);
+  }
 
   return (
     <>
-      <Titulo titulo="Eventos recebidos" descricao="Registro bruto de cada chamada do chatbot. Use para conferir se os dados estão chegando como esperado." />
-      <div className="mb-3">
-        <Selecao
-          rotulo="Situação"
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            setPagina(1);
-          }}
-          className="w-48"
-        >
+      <Titulo titulo="Envios recebidos" descricao="Cada envio da plataforma (fim do atendimento), com o que ele gerou. Os recusados mostram o motivo." />
+      <div className="mb-4 flex flex-wrap gap-3">
+        <Selecao rotulo="Situação" value={status} onChange={(e) => (setStatus(e.target.value), setPagina(1))} className="w-48">
           <option value="">Todos</option>
           <option value="processado">Processados</option>
-          <option value="rejeitado">Rejeitados</option>
-          <option value="duplicado">Duplicados</option>
+          <option value="rejeitado">Recusados</option>
           <option value="capturado">Capturas de teste</option>
+        </Selecao>
+        <Selecao rotulo="Chatbot" value={chatbot} onChange={(e) => (setChatbot(e.target.value), setPagina(1))} className="w-52">
+          <option value="">Todos</option>
+          {(chatbots.data ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.nome}
+            </option>
+          ))}
         </Selecao>
       </div>
       <Cartao>
         {!q.data ? (
           <Carregando />
         ) : !q.data.itens.length ? (
-          <Vazio titulo="Nenhum evento recebido ainda">Gere o token em “Empresas e webhook” e configure o chatbot.</Vazio>
+          <Vazio titulo="Nenhum envio ainda">Configure o link do chatbot no fluxo da plataforma e use "Testar Agora".</Vazio>
         ) : (
           <>
             <ul className="-mx-4 divide-y divide-line">
-              {q.data.itens.map((e) => (
-                <li key={e.id} className="px-4 py-2.5">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <button
-                      onClick={() => setAberto(aberto === e.id ? null : e.id)}
-                      aria-expanded={aberto === e.id}
-                      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left cursor-pointer"
-                    >
-                      <ChevronDown className={cx("size-4 text-muted transition-transform", aberto === e.id && "rotate-180")} />
-                      <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", STATUS[e.status].classe)}>{STATUS[e.status].rotulo}</span>
-                      <span className="flex items-center gap-1.5 text-sm">
-                        <Ponto cor={e.empresaCor} className="size-2" />
-                        {e.empresaNome ?? "—"}
+              {q.data.itens.map((e) => {
+                const r = e.resultado as Record<string, number | string | null> | null;
+                return (
+                  <li key={e.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
+                    <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", STATUS[e.status].classe)}>{STATUS[e.status].rotulo}</span>
+                    <span className="tabular text-ink-2">{dataHora(e.recebidoEm)}</span>
+                    {e.chatbotNome && (
+                      <span className="inline-flex items-center gap-1 text-ink-2">
+                        <Ponto cor={e.chatbotCor} /> {e.chatbotNome}
                       </span>
-                      <span className="text-xs text-muted tabular">{dataHora(e.recebidoEm)}</span>
-                      {e.erro && <span className="text-xs text-bad">{e.erro}</span>}
-                    </button>
-                    {e.atendimentoId && (
-                      <Link to={`/atendimentos/${e.atendimentoId}`} className="text-xs text-accent-ink hover:underline">
-                        Ver atendimento
-                      </Link>
                     )}
-                  </div>
-                  {aberto === e.id && (
-                    <div className="mt-2 grid gap-1">
-                      <div className="flex justify-end">
-                        <BotaoCopiar texto={JSON.stringify(e.payload, null, 2)} rotulo="Copiar JSON" />
-                      </div>
-                      <pre className="max-h-[32rem] overflow-auto rounded-md bg-surface-2 p-3 font-mono text-[11px] leading-snug">{JSON.stringify(e.payload, null, 2)}</pre>
-                    </div>
-                  )}
-                </li>
-              ))}
+                    <span className="min-w-0 flex-1 truncate">
+                      {e.contatoNome && e.contatoId ? (
+                        <Link to={`/atendimentos?busca=${encodeURIComponent(e.contatoNome)}&periodo=tudo`} className="font-medium hover:underline">
+                          {e.contatoNome}
+                        </Link>
+                      ) : null}
+                      {r && (
+                        <span className="ml-2 text-xs text-muted">
+                          {numero(Number(r.atendimentos_novos ?? 0))} novo(s), {numero(Number(r.atendimentos_atualizados ?? 0))} atualizado(s), {numero(Number(r.mensagens_novas ?? 0))} msg nova(s)
+                        </span>
+                      )}
+                      {e.erro && <span className="ml-2 text-xs text-bad">{e.erro}</span>}
+                    </span>
+                    <span className="text-xs text-muted tabular">{numero(Math.round(e.tamanhoBytes / 1024))} KB</span>
+                    <Botao variante="fantasma" onClick={() => copiarJson(e.id)}>
+                      <Copy className="size-4" /> {copiado === e.id ? "Copiado!" : "Copiar JSON"}
+                    </Botao>
+                  </li>
+                );
+              })}
             </ul>
-            <Paginacao pagina={q.data.pagina} porPagina={q.data.porPagina} total={q.data.total} onPagina={setPagina} />
+            <Paginacao pagina={pagina} total={q.data.total} porPagina={30} onPagina={setPagina} />
           </>
         )}
       </Cartao>

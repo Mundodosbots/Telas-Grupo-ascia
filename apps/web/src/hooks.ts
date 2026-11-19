@@ -1,25 +1,35 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
-import { api, type Empresa, type ItemCadastro, type StatusSistema, type Vendedor } from "./api";
+import { api, type Atendente, type Chatbot, type ItemCadastro, type StatusSistema, type Time } from "./api";
+import { useAuth } from "./auth";
 import { diasAtras, isoDia } from "./lib/formato";
 
-export const useEmpresas = () => useQuery({ queryKey: ["empresas"], queryFn: () => api<Empresa[]>("/empresas"), staleTime: 60_000 });
-export const useVendedores = () => useQuery({ queryKey: ["vendedores"], queryFn: () => api<Vendedor[]>("/vendedores"), staleTime: 30_000 });
-export const useOrigens = () => useQuery({ queryKey: ["origens"], queryFn: () => api<ItemCadastro[]>("/origens"), staleTime: 30_000 });
-export const useEtiquetas = () => useQuery({ queryKey: ["etiquetas"], queryFn: () => api<ItemCadastro[]>("/etiquetas"), staleTime: 30_000 });
-export const useStatus = () =>
-  useQuery({ queryKey: ["status"], queryFn: () => api<StatusSistema>("/status"), refetchInterval: 10_000 });
+/** Consultas de dados da empresa só rodam quando há empresa em uso */
+function useDaEmpresa<T>(chave: string, caminho: string, staleTime = 30_000) {
+  const { empresa } = useAuth();
+  return useQuery({ queryKey: [chave, empresa?.id], queryFn: () => api<T>(caminho), staleTime, enabled: !!empresa });
+}
+export const useChatbots = () => useDaEmpresa<Chatbot[]>("chatbots", "/chatbots");
+export const useAtendentes = () => useDaEmpresa<Atendente[]>("atendentes", "/atendentes");
+export const useTimes = () => useDaEmpresa<Time[]>("times", "/times");
+export const useOrigens = () => useDaEmpresa<ItemCadastro[]>("origens", "/origens");
+export const useDepartamentos = () => useDaEmpresa<ItemCadastro[]>("departamentos", "/departamentos");
+export const useEtiquetas = () => useDaEmpresa<ItemCadastro[]>("etiquetas", "/etiquetas");
+
+export function useStatus() {
+  const { empresa } = useAuth();
+  return useQuery({ queryKey: ["status", empresa?.id], queryFn: () => api<StatusSistema>("/status"), refetchInterval: 10_000, enabled: !!empresa });
+}
 
 /**
  * Atualização automática: o status é consultado a cada 10 s (só com a aba visível).
- * Quando chega evento novo ou algum atendimento muda (IA classificou, alguém confirmou),
- * as telas abertas buscam os dados de novo, sem precisar apertar F5.
+ * Quando chega envio novo ou algum atendimento muda, as telas abertas buscam os dados de novo.
  */
 export function useAtualizacaoAutomatica() {
   const qc = useQueryClient();
   const { data } = useStatus();
-  const assinatura = data ? `${data.ultimoEvento?.recebidoEm ?? ""}|${data.ultimaAlteracao ?? ""}|${data.pendentes}|${data.aRevisar}` : null;
+  const assinatura = data ? `${data.ultimoEvento?.recebidoEm ?? ""}|${data.ultimaAlteracao ?? ""}|${data.pendentes}` : null;
   const anterior = useRef<string | null>(null);
   useEffect(() => {
     if (!assinatura) return;
@@ -31,6 +41,7 @@ export function useAtualizacaoAutomatica() {
 }
 
 export const PERIODOS = [
+  { id: "hoje", rotulo: "Hoje" },
   { id: "7d", rotulo: "Últimos 7 dias" },
   { id: "30d", rotulo: "Últimos 30 dias" },
   { id: "90d", rotulo: "Últimos 90 dias" },
@@ -42,6 +53,8 @@ export const PERIODOS = [
 function intervaloDoPeriodo(periodo: string, inicio?: string | null, fim?: string | null) {
   const hoje = isoDia(new Date());
   switch (periodo) {
+    case "hoje":
+      return { inicio: hoje, fim: hoje };
     case "7d":
       return { inicio: diasAtras(6), fim: hoje };
     case "90d":
@@ -57,22 +70,31 @@ function intervaloDoPeriodo(periodo: string, inicio?: string | null, fim?: strin
   }
 }
 
+/** Nomes dos filtros na URL → nomes na API */
+const FILTROS_URL = {
+  chatbot: "chatbot_id",
+  atendente: "atendente_id",
+  time: "time_id",
+  origem: "origem_id",
+  departamento: "departamento_id",
+  etiqueta: "etiqueta_id",
+  canal: "canal",
+  fonte: "fonte",
+  cidade: "cidade",
+  humano: "humano",
+  novo: "novo",
+  busca: "busca",
+} as const;
+
 /** Filtros guardados na URL: dá para compartilhar o link com o filtro aplicado */
 export function useFiltros() {
   const [sp, setSp] = useSearchParams();
   const periodo = sp.get("periodo") || "30d";
   const { inicio, fim } = intervaloDoPeriodo(periodo, sp.get("inicio"), sp.get("fim"));
-  const filtros = {
-    periodo,
-    inicio,
-    fim,
-    empresa_id: sp.get("empresa") || undefined,
-    vendedor_id: sp.get("vendedor") || undefined,
-    origem_id: sp.get("origem") || undefined,
-    etiqueta_id: sp.get("etiqueta") || undefined,
-    status: sp.get("status") || undefined,
-    busca: sp.get("busca") || undefined,
-  };
+  const filtros: Record<string, string | undefined> & { periodo: string; inicio?: string; fim?: string } = { periodo, inicio, fim };
+  for (const [url, api_] of Object.entries(FILTROS_URL)) filtros[api_] = sp.get(url) || undefined;
+  /** Só os parâmetros que a API entende */
+  const consulta = Object.fromEntries(Object.entries(filtros).filter(([k]) => k !== "periodo"));
   function definir(mudancas: Record<string, string | undefined>) {
     const novo = new URLSearchParams(sp);
     for (const [k, v] of Object.entries(mudancas)) {
@@ -83,5 +105,5 @@ export function useFiltros() {
     setSp(novo, { replace: true });
   }
   const pagina = Number(sp.get("pagina")) || 1;
-  return { filtros, definir, pagina, params: sp };
+  return { filtros, consulta, definir, pagina, params: sp };
 }

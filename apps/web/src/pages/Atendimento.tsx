@@ -1,224 +1,340 @@
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { api, type AtendimentoDetalhe } from "../api";
-import { EditorClassificacao } from "../components/EditorClassificacao";
-import { Markdown } from "../components/Markdown";
-import { Alerta, Cartao, Carregando, Chip, cx, Ponto, StatusBadge } from "../components/ui";
-import { dataHora, telefone } from "../lib/formato";
+import { api, type AtendimentoDetalhe, type MensagemConversa } from "../api";
+import { useAuth } from "../auth";
+import { Alerta, Botao, Campo, Cartao, Carregando, Chip, cx, Ponto, Selecao, StatusBadge } from "../components/ui";
+import { useDepartamentos, useEtiquetas, useOrigens } from "../hooks";
+import { dataHora, duracao, telefone } from "../lib/formato";
 
 export function PaginaAtendimento() {
   const { id } = useParams();
-  const nav = useNavigate();
+  const { empresa } = useAuth();
+  const navegar = useNavigate();
   const q = useQuery({
-    queryKey: ["atendimento", id],
+    queryKey: ["atendimento", empresa?.id, id],
     queryFn: () => api<AtendimentoDetalhe>(`/atendimentos/${id}`),
-    // Enquanto a IA trabalha, atualiza sozinho
-    refetchInterval: (query) => (["pendente", "processando"].includes(query.state.data?.status ?? "") ? 3000 : false),
+    refetchInterval: (query) => (["pendente", "processando"].includes(query.state.data?.classificacaoStatus ?? "") ? 3000 : false),
+    enabled: !!empresa,
   });
+  const voltar = () => (window.history.state?.idx > 0 ? navegar(-1) : navegar("/atendimentos"));
 
   if (q.error) return <Alerta>{(q.error as Error).message}</Alerta>;
   if (!q.data) return <Carregando />;
   const a = q.data;
 
   return (
-    <div className="grid gap-4">
-      <button
-        // Aberto por link direto (sem histórico no app)? Volta para a lista em vez de sair do sistema
-        onClick={() => ((window.history.state?.idx ?? 0) > 0 ? nav(-1) : nav("/atendimentos"))}
-        className="flex w-fit items-center gap-1 text-sm text-muted hover:text-ink cursor-pointer">
-        <ArrowLeft className="size-4" /> Voltar
-      </button>
-
+    <div className="grid gap-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{a.clienteNome}</h1>
-          <p className="text-sm text-muted tabular">{telefone(a.clienteTelefone)}</p>
+        <div>
+          <button onClick={voltar} className="mb-2 inline-flex items-center gap-1 text-sm text-muted hover:text-ink cursor-pointer">
+            <ArrowLeft className="size-4" /> Voltar
+          </button>
+          <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold tracking-tight">
+            {a.contato.nome || "Sem nome"}
+            {a.leadNovo && <span className="rounded-full bg-good-soft px-2 py-0.5 text-xs font-semibold text-good">Lead novo</span>}
+          </h1>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
+            <span className="inline-flex items-center gap-1">
+              <Ponto cor={a.chatbotCor} /> {a.chatbotNome}
+            </span>
+            {a.contato.telefone && <span>· {telefone(a.contato.telefone)}</span>}
+            {a.protocolo && <span>· protocolo {a.protocolo}</span>}
+            <span>· {dataHora(a.inicioEm)}</span>
+          </p>
         </div>
-        <StatusBadge status={a.status} />
+        {a.contato.linkConversa && (
+          <a href={a.contato.linkConversa} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-sm font-medium hover:bg-surface-2">
+            <ExternalLink className="size-4" /> Abrir na plataforma
+          </a>
+        )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-        <div className="grid min-w-0 content-start gap-4">
-          <Cartao titulo="Resumo da conversa">
-            {a.resumo ? <Markdown texto={a.resumo} /> : <p className="text-sm text-muted">O bot não enviou resumo.</p>}
-            {a.fonteInformada && (
-              <p className="mt-3 text-xs text-muted">
-                Fonte informada pelo bot: <span className="font-medium text-ink-2">{a.fonteInformada}</span>
-              </p>
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Tempo rotulo="Robô → humano" valor={a.semHumano ? "Sem humano" : duracao(a.tempoAteHumanoS)} ruim={a.semHumano || a.atendidoAte30 === false} bom={a.atendidoAte30 === true} />
+        <Tempo rotulo="1ª resposta humana" valor={duracao(a.tempoPrimeiraRespostaS)} sub="desde a 1ª mensagem do cliente" />
+        <Tempo rotulo="Resposta média" valor={duracao(a.tempoMedioRespostaS)} sub={a.tempoMaxRespostaS ? `máx. ${duracao(a.tempoMaxRespostaS)}` : undefined} />
+        <Tempo rotulo="Esperas > 30 min" valor={String(a.esperasAcima30)} sub={a.semResposta ? `${a.semResposta} sem resposta` : undefined} ruim={a.esperasAcima30 > 0} />
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Cartao
+          titulo={`Conversa · ${a.conversa.length} mensagens`}
+          acao={
+            <span className="text-xs text-muted">
+              {a.msgsCliente} do cliente · {a.msgsBot + a.msgsApi} automáticas · {a.msgsHumano} do atendente
+            </span>
+          }
+        >
+          {a.foraHorario && <Alerta tipo="info">O cliente chegou fora do horário de atendimento — os tempos contam a partir da abertura.</Alerta>}
+          <Conversa msgs={a.conversa} fuso={a.fuso} />
+        </Cartao>
+
+        <div className="grid content-start gap-5">
+          <Organizacao a={a} />
+          <Cartao titulo="Quem atendeu">
+            {a.humanos.length ? (
+              <ol className="grid gap-2 text-sm">
+                {a.humanos.map((h) => (
+                  <li key={h.atendenteId} className="flex items-baseline justify-between gap-2">
+                    <span>
+                      <span className="text-muted">{h.ordem + 1}º</span> <span className="font-medium">{h.nome}</span>
+                    </span>
+                    <span className="text-xs text-muted">
+                      {h.mensagens} msg · desde {dataHora(h.primeiraMsgEm)}
+                    </span>
+                  </li>
+                ))}
+                {a.transferencias > 0 && <li className="text-xs text-muted">{a.transferencias} transferência(s) entre atendentes</li>}
+              </ol>
+            ) : (
+              <p className="text-sm text-muted">{a.precisouHumano ? "Foi para a fila, mas nenhum humano respondeu." : "Resolvido só pelo robô."}</p>
             )}
           </Cartao>
-
-          <Cartao titulo="Classificação">
-            <div className="mb-4 grid gap-2 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">
-              {a.status === "manual" ? (
-                <p className="text-ink-2">
-                  Conferido por <b className="text-ink">{a.classificadoPor ?? "usuário"}</b> em {dataHora(a.classificadoEm)}.
-                </p>
-              ) : a.status === "pendente" || a.status === "processando" ? (
-                <p className="text-ink-2">A IA ainda vai analisar este atendimento.</p>
-              ) : a.status === "erro" ? (
-                <p className="text-bad">A IA falhou {a.tentativas}× ao analisar: {a.erro}</p>
-              ) : (
+          <Cartao titulo="Entrada">
+            <dl className="grid gap-1.5 text-sm">
+              <Linha rotulo="Fonte">{a.fonte}</Linha>
+              <Linha rotulo="Canal">{a.canal}</Linha>
+              <Linha rotulo="Ref. entrada">{a.refEntrada}</Linha>
+              {a.anuncio && (
                 <>
-                  <p className="text-ink-2">
-                    <b className="text-ink">{a.origemPorRegra ? "Origem definida por regra" : "Análise da IA"}</b>
-                    {!a.origemPorRegra && a.confianca !== null && <> · confiança {Math.round(a.confianca * 100)}%</>}
-                  </p>
-                  {a.justificativa &&
-                    a.justificativa.split(" | IA: ").map((parte, i) => (
-                      <p key={i} className="text-ink-2">
-                        {i === 1 && <b className="text-ink">Etiquetas pela IA: </b>}“{parte}”
-                      </p>
-                    ))}
-                  {a.sugestao && (
-                    <p className="text-ink-2">
-                      Nenhuma origem cadastrada serviu. Sugestão: <b className="text-ink">{a.sugestao}</b>
-                    </p>
+                  <Linha rotulo="Anúncio">{a.anuncio.plataforma}</Linha>
+                  <Linha rotulo="Campanha">{a.anuncio.campanha ?? a.anuncio.nome}</Linha>
+                  {a.anuncio.link && (
+                    <Linha rotulo="Link">
+                      <a href={a.anuncio.link} target="_blank" rel="noreferrer" className="text-accent underline break-all">
+                        {a.anuncio.link}
+                      </a>
+                    </Linha>
                   )}
+                  {a.anuncio.texto && <p className="mt-1 rounded-md bg-surface-2 p-2 text-xs text-ink-2 whitespace-pre-line">{a.anuncio.texto}</p>}
                 </>
               )}
-            </div>
-            <EditorClassificacao key={`${a.origemId}-${a.status}-${a.etiquetas.map((e) => e.id).join()}`} atendimento={a} />
-          </Cartao>
-        </div>
-
-        <div className="grid min-w-0 content-start gap-4">
-          <Cartao titulo="Dados">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-muted">Empresa</dt>
-              <dd className="flex items-center gap-2">
-                <Ponto cor={a.empresaCor} /> {a.empresaNome}
-              </dd>
-              <dt className="text-muted">Vendedor</dt>
-              <dd className="font-medium">{a.vendedorNome}</dd>
-              <dt className="text-muted">Origem</dt>
-              <dd>{a.origemNome ? <Chip cor={a.origemCor}>{a.origemNome}</Chip> : "—"}</dd>
-              <dt className="text-muted">Etiquetas</dt>
-              <dd className="flex flex-wrap gap-1">
-                {a.etiquetas.length
-                  ? a.etiquetas.map((e) => (
-                      <Chip key={e.id} cor={e.cor}>
-                        {e.nome}
-                      </Chip>
-                    ))
-                  : "—"}
-              </dd>
-              <dt className="text-muted">1ª atribuição</dt>
-              <dd className="tabular">{dataHora(a.primeiraAtribuicaoEm)}</dd>
-              <dt className="text-muted">Última</dt>
-              <dd className="tabular">{dataHora(a.ultimaAtribuicaoEm)}</dd>
-              {a.conversaId && (
-                <>
-                  <dt className="text-muted">Conversa</dt>
-                  <dd className="truncate font-mono text-xs">{a.conversaId}</dd>
-                </>
+              {a.contato.etiquetas.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {a.contato.etiquetas.map((e) => (
+                    <span key={e} className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-ink-2">
+                      {e}
+                    </span>
+                  ))}
+                </div>
               )}
             </dl>
           </Cartao>
-
-          {(a.etiquetasPlataforma.length > 0 || Object.keys(a.camposPlataforma ?? {}).length > 0 || a.clienteIdExterno) && (
-            <Cartao titulo="Dados da plataforma">
-              <dl className="grid gap-3 text-sm">
-                {a.clienteIdExterno && (
-                  <div className="grid gap-0.5">
-                    <dt className="text-xs text-muted">ID do contato</dt>
-                    <dd className="font-mono text-xs">{a.clienteIdExterno}</dd>
-                  </div>
-                )}
-                <div className="grid gap-0.5">
-                  <dt className="text-xs text-muted">Fonte do contato</dt>
-                  <dd>{a.fonteInformada ?? <span className="text-muted">não informada</span>}</dd>
-                </div>
-                <div className="grid gap-1">
-                  <dt className="text-xs text-muted">Etiquetas na plataforma</dt>
-                  <dd className="flex flex-wrap gap-1">
-                    {a.etiquetasPlataforma.length ? (
-                      a.etiquetasPlataforma.map((e) => (
-                        <span
-                          key={e}
-                          title={e.startsWith("#") ? "Etiqueta sem nome: importe as etiquetas em Empresas e webhook" : undefined}
-                          className={cx(
-                            "rounded-full border px-2 py-0.5 text-xs",
-                            e.startsWith("#") ? "border-warn text-warn" : "border-line bg-surface-2 text-ink-2",
-                          )}
-                        >
-                          {e}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-muted">nenhuma</span>
-                    )}
-                  </dd>
-                </div>
-                {Object.keys(a.camposPlataforma ?? {}).length > 0 && (
-                  <div className="grid gap-1">
-                    <dt className="text-xs text-muted">Campos preenchidos</dt>
-                    <dd className="grid gap-1">
-                      {Object.entries(a.camposPlataforma).map(([k, v]) => (
-                        <div key={k} className="grid grid-cols-[minmax(0,9rem)_1fr] gap-2 text-xs">
-                          <span className="truncate text-muted" title={k}>
-                            {k}
-                          </span>
-                          <span className="break-words text-ink">{v}</span>
-                        </div>
-                      ))}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </Cartao>
-          )}
-
-          <Cartao titulo={`Linha do tempo · ${a.linhaDoTempo.length} atribuiç${a.linhaDoTempo.length === 1 ? "ão" : "ões"}`}>
-            <ol className="relative grid gap-4 border-l border-line pl-5">
-              {a.linhaDoTempo.map((t, i) => {
-                const ultimo = i === a.linhaDoTempo.length - 1;
-                return (
-                  <li key={t.id} className="relative">
-                    <span
-                      className={cx(
-                        "absolute -left-[26px] top-1 size-3 rounded-full border-2",
-                        ultimo ? "border-good bg-good" : "border-line bg-surface",
-                      )}
-                    />
-                    <p className="text-sm">
-                      <b>{t.vendedorNome}</b>
-                      {ultimo && a.linhaDoTempo.length > 1 && <span className="ml-2 text-xs text-good">conta aqui</span>}
-                    </p>
-                    <p className="text-xs text-muted tabular">{dataHora(t.atribuidoEm)}</p>
-                    {t.fonte && <p className="text-xs text-muted">Fonte: {t.fonte}</p>}
-                    <details className="group mt-1">
-                      <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-accent-ink">
-                        <ChevronDown className="size-3 transition-transform group-open:rotate-180" /> Ver dados recebidos
-                      </summary>
-                      {t.resumo && <p className="mt-1.5 whitespace-pre-wrap text-xs text-ink-2">{t.resumo}</p>}
-                      <pre className="mt-1.5 max-h-60 overflow-auto rounded-md bg-surface-2 p-2 text-[11px] leading-snug">
-                        {JSON.stringify(t.payload ?? t.dadosExtras, null, 2)}
-                      </pre>
-                    </details>
-                  </li>
-                );
-              })}
-            </ol>
-          </Cartao>
-
-          {a.outrosAtendimentos.length > 0 && (
-            <Cartao titulo="Outros atendimentos deste cliente">
+          {a.outros.length > 0 && (
+            <Cartao titulo="Outros atendimentos deste contato">
               <ul className="grid gap-1.5 text-sm">
-                {a.outrosAtendimentos.map((o) => (
+                {a.outros.map((o) => (
                   <li key={o.id}>
-                    <Link to={`/atendimentos/${o.id}`} className="flex justify-between gap-3 hover:underline">
-                      <span>{o.vendedorNome}</span>
-                      <span className="text-xs text-muted tabular">{dataHora(o.ultimaAtribuicaoEm)}</span>
+                    <Link to={`/atendimentos/${o.id}`} className="flex justify-between gap-2 hover:underline">
+                      <span>{dataHora(o.inicioEm)}</span>
+                      <span className="truncate text-xs text-muted">{[o.atendenteNome, o.origemNome].filter(Boolean).join(" · ") || "—"}</span>
                     </Link>
                   </li>
                 ))}
               </ul>
             </Cartao>
           )}
+          <Cartao titulo="Campos do contato">
+            <dl className="grid max-h-80 gap-1 overflow-y-auto text-xs">
+              {Object.entries(a.contato.campos)
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div key={k} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-2">
+                    <dt className="truncate text-muted" title={k}>
+                      {k}
+                    </dt>
+                    <dd className="break-words text-ink-2">{v.length > 200 ? v.slice(0, 200) + "…" : v}</dd>
+                  </div>
+                ))}
+            </dl>
+          </Cartao>
         </div>
       </div>
     </div>
+  );
+}
+
+function Tempo({ rotulo, valor, sub, ruim, bom }: { rotulo: string; valor: string; sub?: string; ruim?: boolean; bom?: boolean }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <p className="text-xs text-muted">{rotulo}</p>
+      <p className={cx("mt-0.5 text-xl font-semibold tabular", ruim && "text-bad", bom && "text-good")}>{valor}</p>
+      {sub && <p className="text-xs text-muted">{sub}</p>}
+    </div>
+  );
+}
+
+function Linha({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  if (!children) return null;
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-2">
+      <dt className="text-muted">{rotulo}</dt>
+      <dd className="text-ink">{children}</dd>
+    </div>
+  );
+}
+
+const fmtHora = (iso: string, fuso: string) =>
+  new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+
+function Conversa({ msgs, fuso }: { msgs: MensagemConversa[]; fuso: string }) {
+  const [tudo, setTudo] = useState(msgs.length <= 80);
+  const visiveis = tudo ? msgs : msgs.slice(-80);
+  return (
+    <div className="grid gap-2">
+      {!tudo && (
+        <button onClick={() => setTudo(true)} className="justify-self-center text-xs text-accent hover:underline cursor-pointer">
+          Mostrar as {msgs.length - 80} mensagens anteriores
+        </button>
+      )}
+      {visiveis.map((m) => {
+        const cliente = m.tipo === "cliente";
+        const humano = m.tipo === "humano";
+        return (
+          <div key={m.id} className={cx("flex", cliente ? "justify-start" : "justify-end")}>
+            <div
+              className={cx(
+                "max-w-[85%] rounded-2xl px-3 py-2 text-sm",
+                cliente && "rounded-bl-sm bg-surface-2 text-ink",
+                humano && "rounded-br-sm bg-accent text-white",
+                !cliente && !humano && "rounded-br-sm border border-line bg-surface text-ink-2",
+              )}
+            >
+              <p className={cx("mb-0.5 text-[11px] font-medium", humano ? "text-white/80" : "text-muted")}>
+                {cliente ? "Cliente" : humano ? m.remetente : m.tipo === "api" ? "Integração (API)" : "Robô"} · {fmtHora(m.em, fuso)}
+              </p>
+              <p className="whitespace-pre-line break-words">{m.texto}</p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Origem, departamento, cidade e etiquetas — da regra, da IA ou corrigidos à mão */
+function Organizacao({ a }: { a: AtendimentoDetalhe }) {
+  const qc = useQueryClient();
+  const origens = useOrigens();
+  const departamentos = useDepartamentos();
+  const etiquetas = useEtiquetas();
+  const [editando, setEditando] = useState(false);
+  const [origem, setOrigem] = useState(a.origemId ?? "");
+  const [departamento, setDepartamento] = useState(a.departamentoId ?? "");
+  const [cidade, setCidade] = useState(a.cidade ?? "");
+  const [tags, setTags] = useState(new Set(a.etiquetas.map((e) => e.id)));
+  const atualizar = () => qc.invalidateQueries();
+  const salvar = useMutation({
+    mutationFn: () =>
+      api(`/atendimentos/${a.id}`, {
+        method: "PATCH",
+        body: { origem_id: origem || null, departamento_id: departamento || null, cidade: cidade || null, etiqueta_ids: [...tags] },
+      }),
+    onSuccess: () => {
+      setEditando(false);
+      atualizar();
+    },
+  });
+  const reorganizar = useMutation({ mutationFn: () => api(`/atendimentos/${a.id}/reorganizar`, { method: "POST" }), onSuccess: atualizar });
+
+  return (
+    <Cartao titulo="Organização" acao={<StatusBadge status={a.classificacaoStatus} />}>
+      {!editando ? (
+        <div className="grid gap-2 text-sm">
+          {a.interesse && <p className="font-medium">{a.interesse}</p>}
+          {a.resumo && <p className="text-ink-2">{a.resumo}</p>}
+          <dl className="mt-1 grid gap-1.5">
+            <Linha rotulo="Origem">
+              {a.origemNome && (
+                <span className="inline-flex flex-wrap items-center gap-1">
+                  <Chip cor={a.origemCor}>{a.origemNome}</Chip>
+                  {a.origemPorRegra && <span className="text-xs text-muted">pela regra</span>}
+                </span>
+              )}
+            </Linha>
+            <Linha rotulo="Departamento">{a.departamentoNome && <Chip cor={a.departamentoCor}>{a.departamentoNome}</Chip>}</Linha>
+            <Linha rotulo="Cidade">{a.cidade}</Linha>
+            {a.etiquetas.length > 0 && (
+              <Linha rotulo="Etiquetas">
+                <span className="flex flex-wrap gap-1">
+                  {a.etiquetas.map((e) => (
+                    <Chip key={e.id} cor={e.cor}>
+                      {e.nome}
+                    </Chip>
+                  ))}
+                </span>
+              </Linha>
+            )}
+          </dl>
+          {a.classificacaoJustificativa && <p className="text-xs text-muted">{a.classificacaoJustificativa}</p>}
+          {a.classificadoPor && <p className="text-xs text-muted">Corrigido por {a.classificadoPor}</p>}
+          {a.classificacaoErro && a.classificacaoStatus === "erro" && <Alerta>{a.classificacaoErro}</Alerta>}
+          <div className="mt-1 flex flex-wrap gap-2">
+            <Botao onClick={() => setEditando(true)}>Corrigir</Botao>
+            <Botao variante="fantasma" carregando={reorganizar.isPending} onClick={() => reorganizar.mutate()}>
+              <RefreshCw className="size-4" /> Pedir à IA de novo
+            </Botao>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            salvar.mutate();
+          }}
+        >
+          {salvar.error && <Alerta>{(salvar.error as Error).message}</Alerta>}
+          <Selecao rotulo="Origem" value={origem} onChange={(e) => setOrigem(e.target.value)}>
+            <option value="">Sem origem</option>
+            {(origens.data ?? []).filter((o) => o.ativo || o.id === origem).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.nome}
+              </option>
+            ))}
+          </Selecao>
+          <Selecao rotulo="Departamento" value={departamento} onChange={(e) => setDepartamento(e.target.value)}>
+            <option value="">Sem departamento</option>
+            {(departamentos.data ?? []).filter((o) => o.ativo || o.id === departamento).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.nome}
+              </option>
+            ))}
+          </Selecao>
+          <Campo rotulo="Cidade" value={cidade} onChange={(e) => setCidade(e.target.value)} />
+          <div className="flex flex-wrap gap-1.5">
+            {(etiquetas.data ?? []).filter((e) => e.ativo).map((e) => {
+              const marcada = tags.has(e.id);
+              return (
+                <button
+                  type="button"
+                  key={e.id}
+                  onClick={() => {
+                    const n = new Set(tags);
+                    if (marcada) n.delete(e.id);
+                    else n.add(e.id);
+                    setTags(n);
+                  }}
+                  className={cx("rounded-full border px-2.5 py-1 text-xs cursor-pointer", marcada ? "border-ink bg-ink text-surface" : "border-line text-ink-2")}
+                >
+                  {e.nome}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted">Depois de corrigido, a IA não mexe mais neste atendimento.</p>
+          <div className="flex justify-end gap-2">
+            <Botao type="button" variante="fantasma" onClick={() => setEditando(false)}>
+              Cancelar
+            </Botao>
+            <Botao variante="primario" carregando={salvar.isPending}>
+              Salvar
+            </Botao>
+          </div>
+        </form>
+      )}
+    </Cartao>
   );
 }

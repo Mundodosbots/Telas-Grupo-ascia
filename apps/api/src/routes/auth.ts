@@ -1,12 +1,23 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db/client";
-import { usuarios } from "../db/schema";
-import { COOKIE_SESSAO, criarTokenSessao, opcoesCookie, protegido } from "../lib/auth";
+import { empresas, usuarios } from "../db/schema";
+import { COOKIE_SESSAO, criarTokenSessao, opcoesCookie, protegido, type UsuarioSessao } from "../lib/auth";
 
 // Limite simples contra força bruta: 8 erros por e-mail a cada 15 min
 const falhas = new Map<string, { n: number; ate: number }>();
 const JANELA_MS = 15 * 60 * 1000;
+
+/** Dados de sessão que o front usa: usuário, a empresa dele e (superadmin) a lista de empresas */
+async function perfil(u: UsuarioSessao) {
+  const lista =
+    u.papel === "superadmin"
+      ? await db.select({ id: empresas.id, nome: empresas.nome, ativo: empresas.ativo }).from(empresas).orderBy(asc(empresas.nome))
+      : u.empresaId
+        ? await db.select({ id: empresas.id, nome: empresas.nome, ativo: empresas.ativo }).from(empresas).where(eq(empresas.id, u.empresaId))
+        : [];
+  return { usuario: u, empresas: lista };
+}
 
 export const rotasAuth = new Elysia({ prefix: "/api/auth" })
   .post(
@@ -18,7 +29,6 @@ export const rotasAuth = new Elysia({ prefix: "/api/auth" })
         set.status = 429;
         return { erro: "Muitas tentativas. Aguarde alguns minutos e tente de novo." };
       }
-
       const [u] = await db.select().from(usuarios).where(eq(usuarios.email, email));
       const ok = u && u.ativo && (await Bun.password.verify(body.senha, u.senhaHash));
       if (!ok) {
@@ -27,11 +37,17 @@ export const rotasAuth = new Elysia({ prefix: "/api/auth" })
         set.status = 401;
         return { erro: "E-mail ou senha incorretos" };
       }
+      if (u.empresaId) {
+        const [e] = await db.select({ ativo: empresas.ativo }).from(empresas).where(eq(empresas.id, u.empresaId));
+        if (!e?.ativo) {
+          set.status = 403;
+          return { erro: "O acesso desta empresa está desativado." };
+        }
+      }
       falhas.delete(email);
-
       await db.update(usuarios).set({ ultimoLoginEm: new Date() }).where(eq(usuarios.id, u.id));
       cookie[COOKIE_SESSAO]!.set({ value: criarTokenSessao(u.id), ...opcoesCookie() });
-      return { usuario: { id: u.id, nome: u.nome, email: u.email, papel: u.papel } };
+      return perfil({ id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId });
     },
     { body: t.Object({ email: t.String(), senha: t.String() }) },
   )
@@ -40,7 +56,7 @@ export const rotasAuth = new Elysia({ prefix: "/api/auth" })
     return { ok: true };
   })
   .use(protegido())
-  .get("/eu", ({ usuario }) => ({ usuario }))
+  .get("/eu", ({ usuario }) => perfil(usuario))
   .post(
     "/senha",
     async ({ usuario, body, set }) => {

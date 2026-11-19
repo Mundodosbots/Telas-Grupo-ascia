@@ -1,142 +1,89 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Repeat } from "lucide-react";
-import { Link, useNavigate } from "react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import { api, qs, type AtendimentoItem, type Pagina } from "../api";
+import { useAuth } from "../auth";
 import { BarraFiltros } from "../components/Filtros";
 import { Titulo } from "../components/Layout";
-import { Alerta, Cartao, Carregando, Chip, Paginacao, Ponto, Selecao, StatusBadge, Vazio } from "../components/ui";
+import { Alerta, Cartao, Carregando, Chip, cx, Paginacao, Ponto, Vazio } from "../components/ui";
 import { useFiltros } from "../hooks";
-import { dataHora, telefone } from "../lib/formato";
+import { dataHora, duracao, numero, telefone } from "../lib/formato";
 
-const OPCOES_STATUS = [
-  { v: "", r: "Todos" },
-  { v: "revisar,erro", r: "A revisar" },
-  { v: "pendente,processando", r: "Na fila da IA" },
-  { v: "classificado", r: "Classificados pela IA" },
-  { v: "manual", r: "Conferidos" },
-];
+const POR_PAGINA = 25;
 
 export function PaginaAtendimentos() {
-  const { filtros, definir, pagina } = useFiltros();
-  const consulta = qs({
-    empresa_id: filtros.empresa_id,
-    inicio: filtros.inicio,
-    fim: filtros.fim,
-    vendedor_id: filtros.vendedor_id,
-    origem_id: filtros.origem_id,
-    etiqueta_id: filtros.etiqueta_id,
-    status: filtros.status,
-    busca: filtros.busca,
-    pagina,
-    por_pagina: 25,
-  });
-  const q = useQuery({
-    queryKey: ["atendimentos", consulta],
-    queryFn: () => api<Pagina<AtendimentoItem>>(`/atendimentos${consulta}`),
-    placeholderData: keepPreviousData,
+  const { consulta, definir, pagina } = useFiltros();
+  const { empresa } = useAuth();
+  const navegar = useNavigate();
+  const q = qs({ ...consulta, pagina, por_pagina: POR_PAGINA });
+  const lista = useQuery({
+    queryKey: ["atendimentos", empresa?.id, q],
+    queryFn: () => api<Pagina<AtendimentoItem>>(`/atendimentos${q}`),
+    placeholderData: (a) => a,
+    enabled: !!empresa,
   });
 
   return (
     <>
-      <Titulo titulo="Atendimentos" descricao="Cada linha é um cliente atribuído. Se ele foi repassado, aparece com o último vendedor." />
-      <BarraFiltros extras={["vendedor", "origem", "etiqueta", "busca"]} />
-      <div className="mb-3 flex items-end gap-3">
-        <Selecao rotulo="Situação" value={filtros.status ?? ""} onChange={(e) => definir({ status: e.target.value })} className="w-52">
-          {OPCOES_STATUS.map((o) => (
-            <option key={o.v} value={o.v}>
-              {o.r}
-            </option>
-          ))}
-        </Selecao>
-      </div>
+      <Titulo titulo="Atendimentos" descricao="Cada linha é um atendimento (um protocolo). Clique para ver a conversa, os tempos e de onde o cliente veio." />
+      <BarraFiltros extras={["atendente", "departamento", "origem", "etiqueta", "cidade", "busca", "humano"]} />
       <Cartao>
-        {q.error && <Alerta>{(q.error as Error).message}</Alerta>}
-        {!q.data ? (
+        {lista.error ? (
+          <Alerta>{(lista.error as Error).message}</Alerta>
+        ) : !lista.data ? (
           <Carregando />
-        ) : q.data.itens.length === 0 ? (
-          <Vazio titulo="Nenhum atendimento encontrado">Ajuste os filtros acima.</Vazio>
+        ) : !lista.data.itens.length ? (
+          <Vazio titulo="Nenhum atendimento neste filtro" />
         ) : (
           <>
-            <TabelaAtendimentos itens={q.data.itens} />
-            <Paginacao pagina={q.data.pagina} porPagina={q.data.porPagina} total={q.data.total} onPagina={(p) => definir({ pagina: String(p) })} />
+            <p className="mb-2 text-xs text-muted">{numero(lista.data.total)} atendimento(s)</p>
+            <div className="-mx-4 overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead>
+                  <tr className="border-b border-line text-left text-xs text-muted">
+                    <th className="px-4 py-2 font-medium">Cliente</th>
+                    <th className="px-3 py-2 font-medium">Início</th>
+                    <th className="px-3 py-2 font-medium">Atendente</th>
+                    <th className="px-3 py-2 font-medium">Origem</th>
+                    <th className="px-3 py-2 font-medium">Departamento</th>
+                    <th className="px-3 py-2 text-right font-medium">Robô → humano</th>
+                    <th className="px-4 py-2 text-right font-medium">Resp. média</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.data.itens.map((a) => (
+                    <tr key={a.id} onClick={() => navegar(`/atendimentos/${a.id}`)} className="cursor-pointer border-b border-line/60 last:border-0 hover:bg-surface-2">
+                      <td className="px-4 py-2.5">
+                        <p className="flex items-center gap-1.5 font-medium text-ink">
+                          {a.contatoNome || "Sem nome"}
+                          {a.leadNovo && <span className="rounded-full bg-good-soft px-1.5 text-[10px] font-semibold text-good">NOVO</span>}
+                        </p>
+                        <p className="flex items-center gap-1.5 text-xs text-muted">
+                          <Ponto cor={a.chatbotCor} className="size-2" />
+                          {a.chatbotNome}
+                          {a.contatoTelefone && ` · ${telefone(a.contatoTelefone)}`}
+                          {a.protocolo && ` · #${a.protocolo}`}
+                        </p>
+                      </td>
+                      <td className="px-3 py-2.5 whitespace-nowrap tabular text-ink-2">{dataHora(a.inicioEm)}</td>
+                      <td className="px-3 py-2.5">{a.atendenteNome ?? <span className="text-muted">{a.precisouHumano ? "—" : "Só robô"}</span>}</td>
+                      <td className="px-3 py-2.5">{a.origemNome ? <Chip cor={a.origemCor}>{a.origemNome}</Chip> : <span className="text-muted">{a.status === "pendente" || a.status === "processando" ? "IA analisando…" : "—"}</span>}</td>
+                      <td className="px-3 py-2.5">{a.departamentoNome ? <Chip cor={a.departamentoCor}>{a.departamentoNome}</Chip> : <span className="text-muted">—</span>}</td>
+                      <td className={cx("px-3 py-2.5 text-right tabular", a.semHumano && "text-bad", a.atendidoAte30 === false && !a.semHumano && "text-warn")}>
+                        {a.semHumano ? "sem humano" : duracao(a.tempoAteHumanoS)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular">
+                        {duracao(a.tempoMedioRespostaS)}
+                        {a.esperasAcima30 > 0 && <span className="ml-1 text-xs text-bad">({a.esperasAcima30}×&gt;30)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Paginacao pagina={pagina} total={lista.data.total} porPagina={POR_PAGINA} onPagina={(p) => definir({ pagina: String(p) })} />
           </>
         )}
       </Cartao>
     </>
-  );
-}
-
-export function TabelaAtendimentos({ itens }: { itens: AtendimentoItem[] }) {
-  const nav = useNavigate();
-  return (
-    <div className="-mx-4 overflow-x-auto">
-      <table className="w-full min-w-[860px] text-[13px]">
-        <thead>
-          <tr className="border-b border-line text-left text-xs text-muted">
-            <th className="min-w-44 px-4 py-2 font-medium">Cliente</th>
-            <th className="px-2 py-2 font-medium">Vendedor</th>
-            <th className="px-2 py-2 font-medium">Origem</th>
-            <th className="px-2 py-2 font-medium">Etiquetas</th>
-            <th className="px-2 py-2 font-medium">Situação</th>
-            <th className="px-4 py-2 text-right font-medium">Última atribuição</th>
-          </tr>
-        </thead>
-        <tbody>
-          {itens.map((a) => (
-            <tr
-              key={a.id}
-              onClick={(e) => !(e.target as HTMLElement).closest("a,button") && nav(`/atendimentos/${a.id}`)}
-              className="border-b border-line last:border-0 hover:bg-surface-2 cursor-pointer"
-            >
-              <td className="px-4 py-2.5">
-                <Link to={`/atendimentos/${a.id}`} className="block min-w-0">
-                  <span className="block font-medium text-ink hover:underline">{a.clienteNome}</span>
-                  <span className="block whitespace-nowrap text-xs text-muted tabular">{telefone(a.clienteTelefone)}</span>
-                </Link>
-              </td>
-              <td className="px-2 py-2.5">
-                <span className="flex items-center gap-2">
-                  <Ponto cor={a.empresaCor} className="size-2" />
-                  <span>
-                    <span className="block">{a.vendedorNome}</span>
-                    <span className="block text-xs text-muted">{a.empresaNome}</span>
-                  </span>
-                  {a.totalAtribuicoes > 1 && (
-                    <span title={`Atribuído ${a.totalAtribuicoes} vezes`} className="inline-flex items-center gap-0.5 text-xs text-muted tabular">
-                      <Repeat className="size-3" />
-                      {a.totalAtribuicoes}
-                    </span>
-                  )}
-                </span>
-              </td>
-              <td className="px-2 py-2.5">
-                {a.origemNome ? (
-                  <Chip cor={a.origemCor}>{a.origemNome}</Chip>
-                ) : a.sugestao ? (
-                  <span className="text-xs text-muted" title="Sugestão da IA">
-                    Sugestão: “{a.sugestao}”
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted">—</span>
-                )}
-              </td>
-              <td className="px-2 py-2.5">
-                <div className="flex max-w-56 flex-wrap gap-1">
-                  {a.etiquetas.map((e) => (
-                    <Chip key={e.id} cor={e.cor}>
-                      {e.nome}
-                    </Chip>
-                  ))}
-                </div>
-              </td>
-              <td className="px-2 py-2.5">
-                <StatusBadge status={a.status} />
-              </td>
-              <td className="px-4 py-2.5 text-right text-xs text-ink-2 tabular whitespace-nowrap">{dataHora(a.ultimaAtribuicaoEm)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }

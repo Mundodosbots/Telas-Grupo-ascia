@@ -1,1 +1,0 @@
-ALTER TYPE "public"."status_evento" ADD VALUE 'capturado';

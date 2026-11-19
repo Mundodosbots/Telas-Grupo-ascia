@@ -7,22 +7,43 @@ import { Titulo } from "../components/Layout";
 import { Alerta, Botao, Campo, Cartao, Carregando, cx, Modal, Selecao } from "../components/ui";
 import { dataHora } from "../lib/formato";
 
+const NOME_PAPEL: Record<Papel, string> = { superadmin: "Superadmin", admin: "Administrador", gerente: "Gerente" };
+
 export function PaginaUsuarios() {
-  const q = useQuery({ queryKey: ["usuarios"], queryFn: () => api<UsuarioLista[]>("/usuarios") });
+  const { usuario, empresa } = useAuth();
+  const superadmin = usuario?.papel === "superadmin";
+  const [aba, setAba] = useState<"empresa" | "superadmins">("empresa");
+  const caminho = aba === "superadmins" ? "/usuarios?superadmins=1" : "/usuarios";
+  const q = useQuery({ queryKey: ["usuarios", aba, empresa?.id], queryFn: () => api<UsuarioLista[]>(caminho) });
   const [editando, setEditando] = useState<UsuarioLista | "novo" | null>(null);
   return (
     <>
       <Titulo
         titulo="Usuários"
-        descricao="Só você (master) cria contas. Gerentes veem tudo, corrigem classificações e mantêm os cadastros."
+        descricao="Administradores criam usuários e mexem nos cadastros. Gerentes veem o painel, os atendimentos e os relatórios."
         acoes={
           <Botao variante="primario" onClick={() => setEditando("novo")}>
             <Plus className="size-4" /> Novo usuário
           </Botao>
         }
       />
+      {superadmin && (
+        <div className="mb-3 flex gap-1.5">
+          {(["empresa", "superadmins"] as const).map((a) => (
+            <button
+              key={a}
+              onClick={() => setAba(a)}
+              className={cx("h-8 rounded-full border px-3 text-sm cursor-pointer", aba === a ? "border-ink bg-ink text-surface" : "border-line text-ink-2")}
+            >
+              {a === "empresa" ? `Usuários de ${empresa?.nome ?? "…"}` : "Superadmins da plataforma"}
+            </button>
+          ))}
+        </div>
+      )}
       <Cartao>
-        {!q.data ? (
+        {q.error ? (
+          <Alerta>{(q.error as Error).message}</Alerta>
+        ) : !q.data ? (
           <Carregando />
         ) : (
           <ul className="-mx-4 divide-y divide-line">
@@ -30,7 +51,7 @@ export function PaginaUsuarios() {
               <li key={u.id} className={cx("flex items-center gap-3 px-4 py-3", !u.ativo && "opacity-60")}>
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">
-                    {u.nome} <span className="ml-1 text-xs font-normal text-muted">{u.papel === "master" ? "Master" : "Gerente"}</span>
+                    {u.nome} <span className="ml-1 text-xs font-normal text-muted">{NOME_PAPEL[u.papel]}</span>
                     {!u.ativo && <span className="ml-1 text-xs font-normal text-bad">bloqueado</span>}
                   </p>
                   <p className="text-xs text-muted">
@@ -45,69 +66,69 @@ export function PaginaUsuarios() {
           </ul>
         )}
       </Cartao>
-      {editando && <FormUsuario usuario={editando === "novo" ? null : editando} onFechar={() => setEditando(null)} />}
+      {editando && <FormUsuario usuario={editando === "novo" ? null : editando} superadmins={aba === "superadmins"} onFechar={() => setEditando(null)} />}
     </>
   );
 }
 
-function FormUsuario({ usuario, onFechar }: { usuario: UsuarioLista | null; onFechar: () => void }) {
+function FormUsuario({ usuario, superadmins, onFechar }: { usuario: UsuarioLista | null; superadmins: boolean; onFechar: () => void }) {
   const { usuario: eu } = useAuth();
   const qc = useQueryClient();
   const [nome, setNome] = useState(usuario?.nome ?? "");
   const [email, setEmail] = useState(usuario?.email ?? "");
   const [senha, setSenha] = useState("");
-  const [papel, setPapel] = useState<Papel>(usuario?.papel ?? "gerente");
+  const [papel, setPapel] = useState<Papel>(usuario?.papel ?? (superadmins ? "superadmin" : "gerente"));
   const [ativo, setAtivo] = useState(usuario?.ativo ?? true);
-  const [erro, setErro] = useState<string | null>(null);
-  const souEu = usuario?.id === eu?.id;
   const salvar = useMutation({
     mutationFn: () =>
       usuario
-        ? api(`/usuarios/${usuario.id}`, { method: "PATCH", body: { nome, papel, ativo, ...(senha && { senha }) } })
-        : api(`/usuarios`, { method: "POST", body: { nome, email, senha, papel } }),
+        ? api(`/usuarios/${usuario.id}`, {
+            method: "PATCH",
+            body: { nome, ativo, ...(usuario.papel !== "superadmin" && { papel }), ...(senha && { senha }) },
+          })
+        : api("/usuarios", { method: "POST", body: { nome, email, senha, papel } }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["usuarios"] });
       onFechar();
     },
-    onError: (e) => setErro((e as Error).message),
   });
+  const souEu = usuario?.id === eu?.id;
   return (
     <Modal titulo={usuario ? `Editar ${usuario.nome}` : "Novo usuário"} aberto onFechar={onFechar}>
       <form
-        className="grid gap-4"
+        className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           salvar.mutate();
         }}
       >
-        {erro && <Alerta>{erro}</Alerta>}
-        <Campo id="usr-nome" rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} />
-        <Campo id="usr-email" rotulo="E-mail (login)" type="email" required disabled={!!usuario} value={email} onChange={(e) => setEmail(e.target.value)} />
+        {salvar.error && <Alerta>{(salvar.error as Error).message}</Alerta>}
+        <Campo rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} />
+        <Campo rotulo="E-mail" type="email" required disabled={!!usuario} value={email} onChange={(e) => setEmail(e.target.value)} />
         <Campo
-          id="usr-senha"
-          rotulo={usuario ? "Nova senha (deixe vazio para manter)" : "Senha inicial"}
+          rotulo={usuario ? "Nova senha (deixe em branco para manter)" : "Senha inicial"}
           type="password"
-          autoComplete="new-password"
-          minLength={8}
           required={!usuario}
+          minLength={8}
           value={senha}
           onChange={(e) => setSenha(e.target.value)}
-          ajuda="Mínimo de 8 caracteres. A pessoa pode trocar depois em “Minha senha”."
         />
-        <Selecao id="usr-papel" rotulo="Perfil" value={papel} disabled={souEu} onChange={(e) => setPapel(e.target.value as Papel)}>
-          <option value="gerente">Gerente</option>
-          <option value="master">Master (pode criar contas e tokens)</option>
-        </Selecao>
+        {papel !== "superadmin" && (
+          <Selecao rotulo="Papel" value={papel} disabled={souEu} onChange={(e) => setPapel(e.target.value as Papel)}>
+            <option value="gerente">Gerente — vê painel, atendimentos e relatórios</option>
+            <option value="admin">Administrador — também cria usuários e mexe nos cadastros</option>
+          </Selecao>
+        )}
         {usuario && !souEu && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} /> Acesso liberado
           </label>
         )}
         <div className="flex justify-end gap-2">
-          <Botao type="button" onClick={onFechar}>
+          <Botao type="button" variante="fantasma" onClick={onFechar}>
             Cancelar
           </Botao>
-          <Botao type="submit" variante="primario" carregando={salvar.isPending}>
+          <Botao variante="primario" carregando={salvar.isPending}>
             Salvar
           </Botao>
         </div>

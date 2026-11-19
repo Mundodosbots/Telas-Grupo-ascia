@@ -1,447 +1,379 @@
-import { and, asc, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
-import { db, type Tx } from "../db/client";
-import {
-  atendimentos,
-  atribuicoes,
-  clientes,
-  dicionarioEtiquetas,
-  origens,
-  regrasOrigem,
-  vendedores,
-  webhookEventos,
-  type Empresa,
-} from "../db/schema";
-import { env } from "../env";
-import { normalizarNome, normalizarTelefone, parseData, texto } from "../lib/util";
-import { agenteAtivo } from "./classificador";
-import { ehFormatoPlataforma, lerContato, SEM_CONSULTOR } from "./plataforma";
-
 /**
- * Campos reconhecidos no JSON genérico do webhook. Tudo que não estiver aqui
- * vai para `dados_extras` da atribuição — nada se perde.
+ * Ingestão do envio da plataforma (fim do atendimento):
+ *   contato completo + campos personalizados + histórico (200 e 50 mensagens)
+ * → contato, atendentes, atendimentos (1 por protocolo) com tempos, mensagens, regras de origem.
+ * Reenviar o mesmo contato só atualiza; nada duplica.
  */
-const CAMPOS_CONHECIDOS = new Set([
-  "evento_id", "conversa_id", "cliente", "cliente_nome", "nome", "cliente_telefone", "telefone",
-  "vendedor", "vendedor_nome", "vendedor_id", "vendedor_email", "fonte", "origem", "resumo",
-  "data_atribuicao", "atribuido_em", "data", "empresa",
-]);
+import { and, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { db } from "../db/client";
+import {
+  atendentes,
+  atendimentoAtendentes,
+  atendimentos,
+  contatos,
+  mensagens,
+  webhookEventos,
+  type Atendente,
+  type Chatbot,
+  type DadosAnuncio,
+} from "../db/schema";
+import { normalizarNome } from "../lib/util";
+import { calcularTempos, juntarHistoricos, lerHistorico, localParaUtc, separarAtendimentos, type Mensagem, type Sessao } from "./historico";
+import { aplicarRegras } from "./regras";
 
-export type DadosAtribuicao = {
-  eventoId?: string;
-  conversaId?: string;
-  clienteIdExterno?: string;
-  clienteNome: string;
-  clienteTelefone: string;
-  vendedorNome: string;
-  vendedorIdExterno?: string;
-  vendedorEmail?: string;
-  fonte?: string;
-  resumo: string;
-  /** Etiquetas da plataforma (nomes) — usadas pelas regras de origem e pela IA */
-  etiquetas: string[];
-  /** Campos personalizados relevantes da plataforma */
-  campos: Record<string, string>;
-  atribuidoEm: Date;
-  extras: Record<string, unknown>;
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Atendimentos mais antigos que isso entram pelo histórico, mas não vão para a IA (custo) */
+const JANELA_IA_DIAS = 60;
+const MAX_VALOR_CAMPO = 3000;
+
+export class EnvioInvalido extends Error {}
+
+/** Nome de atendente para comparar: sem acento, minúsculo e sem pontuação ("Mundo dos Bots ." = "mundo dos bots") */
+export const nomeDeAtendente = (s: string) =>
+  normalizarNome(s)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Lê os campos personalizados por nome (sem diferença de maiúsculas/acentos) */
+function leitorCampos(p: Record<string, any>) {
+  const mapa = new Map<string, string>();
+  for (const c of Array.isArray(p.custom_fields) ? p.custom_fields : []) {
+    if (!c || typeof c !== "object") continue;
+    const nome = String(c.name ?? "").trim();
+    const valor = c.value === null || c.value === undefined ? "" : String(c.value).trim();
+    if (nome) mapa.set(normalizarNome(nome), valor);
+  }
+  const campo = (...nomes: string[]) => {
+    for (const n of nomes) {
+      const v = mapa.get(normalizarNome(n));
+      if (v) return v;
+    }
+    return undefined;
+  };
+  return { mapa, campo };
+}
+
+/** "17/12/2025 15:27" (hora local) ou "2025-12-17 15:27:00" (UTC da plataforma) */
+function lerData(v: unknown, fuso: string, utc: boolean): Date | undefined {
+  const s = typeof v === "string" ? v.trim() : "";
+  let m = /^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (m) return localParaUtc(+m[3]!, +m[2]!, +m[1]!, +m[4]!, +m[5]!, +(m[6] ?? 0), fuso);
+  m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (m) return utc ? new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +(m[6] ?? 0))) : localParaUtc(+m[1]!, +m[2]!, +m[3]!, +m[4]!, +m[5]!, +(m[6] ?? 0), fuso);
+  return undefined;
+}
+
+export type ResultadoIngestao = {
+  eventoId: string;
+  contatoId: string;
+  contato: string;
+  telefone: string | null;
+  atendente: string | null;
+  sessoes: number;
+  atendimentosNovos: number;
+  atendimentosAtualizados: number;
+  mensagensNovas: number;
+  origemRegra: string | null;
 };
 
-export class PayloadInvalido extends Error {}
+export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBytes: number): Promise<ResultadoIngestao> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new EnvioInvalido("O corpo precisa ser um objeto JSON (o contato da plataforma)");
+  const p = payload as Record<string, any>;
+  const idExterno = String(p.id ?? p.user_id ?? "").trim();
+  if (!idExterno) throw new EnvioInvalido('Faltou o "id" do contato');
+  const { mapa, campo } = leitorCampos(p);
+  const fuso = chatbot.fuso;
 
-/** JSON genérico (documentado no README) */
-function interpretarGenerico(p: Record<string, any>): DadosAtribuicao {
-  const cliente = p.cliente && typeof p.cliente === "object" ? p.cliente : {};
-  const vendedor = p.vendedor && typeof p.vendedor === "object" ? p.vendedor : {};
+  // ---------- dados do envio ----------
+  const historicos = [...mapa.entries()].filter(([k]) => k.startsWith("historico")).map(([, v]) => v);
+  const msgs = juntarHistoricos(...historicos.map((h) => lerHistorico(h, fuso)));
+  const sessoes = separarAtendimentos(msgs);
 
-  const telefone = normalizarTelefone(texto(p.cliente_telefone) ?? texto(cliente.telefone) ?? texto(p.telefone) ?? "");
-  const vendedorNome =
-    (typeof p.vendedor === "string" ? texto(p.vendedor) : undefined) ?? texto(p.vendedor_nome) ?? texto(vendedor.nome);
-
-  const faltando: string[] = [];
-  if (!telefone) faltando.push("cliente_telefone");
-  if (!vendedorNome) faltando.push("vendedor");
-  if (faltando.length) throw new PayloadInvalido(`Campos obrigatórios ausentes: ${faltando.join(", ")}`);
-
-  const extras: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(p)) if (!CAMPOS_CONHECIDOS.has(k)) extras[k] = v;
-
-  return {
-    eventoId: texto(p.evento_id),
-    conversaId: texto(p.conversa_id),
-    clienteNome: texto(p.cliente_nome) ?? texto(cliente.nome) ?? texto(p.nome) ?? "Sem nome",
-    clienteTelefone: telefone,
-    vendedorNome: vendedorNome!,
-    vendedorIdExterno: texto(p.vendedor_id) ?? texto(vendedor.id),
-    vendedorEmail: texto(p.vendedor_email) ?? texto(vendedor.email),
-    fonte: texto(p.fonte) ?? texto(p.origem),
-    resumo: texto(p.resumo) ?? "",
-    etiquetas: [],
-    campos: {},
-    atribuidoEm: parseData(p.data_atribuicao) ?? parseData(p.atribuido_em) ?? parseData(p.data) ?? new Date(),
-    extras,
+  const nomesEtiquetas = campo("Etiquetas Nomes", "user_tags");
+  const etiquetasNomes = nomesEtiquetas
+    ? nomesEtiquetas.split(/\s*,\s*/).filter(Boolean)
+    : (Array.isArray(p.tags) ? p.tags : []).map((t: any) => `#${t?.id ?? t}`).filter((x: string) => x !== "#undefined");
+  const anuncio: DadosAnuncio = {
+    titulo: campo("ADS Titulo"),
+    texto: campo("ADS Texto"),
+    ctwa: campo("ADS CTWA"),
+    link: campo("ADS Link"),
+    plataforma: campo("ADS Plataforma"),
+    campanha: campo("ADS Campanha"),
+    nome: campo("ADS Nome"),
+    formulario: campo("Formulario Lead"),
   };
-}
+  const temAnuncio = Object.values(anuncio).some(Boolean);
+  const fonte = campo("Fonte do contato", "Fonte") ?? null;
+  const canalBruto = campo("Canal da Conversa", "Canal") ?? null;
+  const canal = canalBruto && !/ainda nao descobri/i.test(normalizarNome(canalBruto)) ? canalBruto : null;
+  const camposGuardados = Object.fromEntries(
+    [...mapa.entries()].filter(([k]) => !k.startsWith("historico")).map(([k, v]) => [k, v.length > MAX_VALOR_CAMPO ? v.slice(0, MAX_VALOR_CAMPO) + "…" : v]),
+  );
+  const nomeAtendente = campo("Atendente", "Consultor");
+  const idAtendente = campo("Atendente ID");
 
-/** Formato da plataforma: o contato inteiro com custom_fields e tags */
-function interpretarPlataforma(p: Record<string, any>, dicionario: Map<string, string>): DadosAtribuicao {
-  const c = lerContato(p, dicionario);
-  if (!c.telefone && !c.idExterno) throw new PayloadInvalido("Contato sem telefone (phone) e sem id");
-  return {
-    clienteIdExterno: c.idExterno,
-    clienteNome: c.nome,
-    // Sem telefone (ex.: Instagram), usa o ID do contato como identificador
-    clienteTelefone: c.telefone || `id:${c.idExterno}`,
-    vendedorNome: c.consultor ?? SEM_CONSULTOR,
-    fonte: c.fonte,
-    resumo: c.resumo,
-    etiquetas: c.etiquetas,
-    campos: c.campos,
-    atribuidoEm: new Date(),
-    extras: {
-      formato: "plataforma",
-      contato: { id: p.id, canal: p.channel, pagina: p.page_id, live_chat: p.live_chat },
-      etiquetas: c.etiquetas,
-      campos: c.campos,
-      ...(!c.consultor && { aviso: "Campo personalizado 'Consultor' vazio" }),
-    },
-  };
-}
-
-export function interpretarPayload(payload: unknown, dicionario = new Map<string, string>()): DadosAtribuicao {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new PayloadInvalido("O corpo deve ser um objeto JSON");
-  }
-  return ehFormatoPlataforma(payload) ? interpretarPlataforma(payload, dicionario) : interpretarGenerico(payload as Record<string, any>);
-}
-
-async function obterVendedor(tx: Tx, empresaId: string, d: DadosAtribuicao) {
-  const nomeNormalizado = normalizarNome(d.vendedorNome);
-
-  if (d.vendedorIdExterno) {
-    const [porId] = await tx
-      .select()
-      .from(vendedores)
-      .where(and(eq(vendedores.empresaId, empresaId), eq(vendedores.idExterno, d.vendedorIdExterno)));
-    if (porId) return porId;
-  }
-
-  const [porNome] = await tx
-    .select()
-    .from(vendedores)
-    .where(
-      and(
-        eq(vendedores.empresaId, empresaId),
-        or(eq(vendedores.nomeNormalizado, nomeNormalizado), sql`${nomeNormalizado} = any(${vendedores.apelidos})`),
-      ),
-    )
-    .limit(1);
-  if (porNome) {
-    if (d.vendedorIdExterno && !porNome.idExterno) {
-      await tx.update(vendedores).set({ idExterno: d.vendedorIdExterno }).where(eq(vendedores.id, porNome.id));
+  return db.transaction(async (tx) => {
+    // Serializa envios do mesmo contato
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${chatbot.id + ":" + idExterno}))`);
+    if (!chatbot.contaExterna && (p.account_id || p.page_id)) {
+      await tx.execute(sql`update chatbots set conta_externa = ${String(p.account_id ?? p.page_id)} where id = ${chatbot.id} and conta_externa is null`);
     }
-    return porNome;
-  }
 
-  // Vendedor novo: cadastra automaticamente na empresa do token
-  const [novo] = await tx
-    .insert(vendedores)
-    .values({
-      empresaId,
-      nome: d.vendedorNome,
-      nomeNormalizado,
-      idExterno: d.vendedorIdExterno ?? null,
-      email: d.vendedorEmail ?? null,
-    })
-    .returning();
-  return novo!;
-}
+    // ---------- contato ----------
+    const dadosContato = {
+      nome: String(p.full_name ?? [p.first_name, p.last_name].filter(Boolean).join(" ") ?? "").replace(/\s+/g, " ").trim(),
+      telefone: typeof p.phone === "string" && p.phone.trim() ? p.phone.replace(/\D/g, "") : null,
+      cidade: campo("cidade", "Cidade Contato", "Municipio") ?? null,
+      criadoNaPlataformaEm: lerData(p.subscribed_date ?? p.created_at, fuso, true) ?? lerData(campo("Data Criacao Contato"), fuso, false) ?? null,
+      linkConversa: campo("Link Conversa") ?? null,
+      etiquetas: etiquetasNomes,
+      campos: camposGuardados,
+      atualizadoEm: new Date(),
+    };
+    const [contato] = await tx
+      .insert(contatos)
+      .values({ empresaId: chatbot.empresaId, chatbotId: chatbot.id, idExterno, ...dadosContato })
+      .onConflictDoUpdate({ target: [contatos.chatbotId, contatos.idExterno], set: dadosContato })
+      .returning();
 
-/** Cliente pelo ID do contato na plataforma; se não houver, pelo telefone. Atualiza nome/telefone. */
-async function obterCliente(tx: Tx, empresaId: string, d: DadosAtribuicao) {
-  const nomeNovo = d.clienteNome === "Sem nome" ? undefined : d.clienteNome;
-  if (d.clienteIdExterno) {
-    const [porId] = await tx
-      .select()
-      .from(clientes)
-      .where(and(eq(clientes.empresaId, empresaId), eq(clientes.idExterno, d.clienteIdExterno)));
-    if (porId) {
-      const [ocupado] = await tx
-        .select({ id: clientes.id })
-        .from(clientes)
-        .where(and(eq(clientes.empresaId, empresaId), eq(clientes.telefone, d.clienteTelefone)));
-      const [atual] = await tx
-        .update(clientes)
-        .set({
-          ...(nomeNovo && { nome: nomeNovo }),
-          ...((!ocupado || ocupado.id === porId.id) && { telefone: d.clienteTelefone }),
-          atualizadoEm: new Date(),
-        })
-        .where(eq(clientes.id, porId.id))
-        .returning();
-      return atual!;
-    }
-  }
-  const [cliente] = await tx
-    .insert(clientes)
-    .values({ empresaId, nome: d.clienteNome, telefone: d.clienteTelefone, idExterno: d.clienteIdExterno ?? null })
-    .onConflictDoUpdate({
-      target: [clientes.empresaId, clientes.telefone],
-      set: {
-        nome: nomeNovo ?? sql`${clientes.nome}`,
-        idExterno: sql`coalesce(${clientes.idExterno}, excluded.id_externo)`,
-        atualizadoEm: new Date(),
-      },
-    })
-    .returning();
-  return cliente!;
-}
-
-export type RegraAplicada = { id: string; origemId: string; descricao: string };
-
-/** Primeira regra ativa (por prioridade) que bate com as etiquetas, a fonte ou o texto do resumo */
-export async function aplicarRegras(
-  tx: Tx | typeof db,
-  empresaId: string,
-  etiquetas: string[],
-  fonte?: string,
-  resumo?: string,
-): Promise<RegraAplicada | null> {
-  const regras = await tx
-    .select({ r: regrasOrigem, origemNome: origens.nome })
-    .from(regrasOrigem)
-    .innerJoin(origens, eq(origens.id, regrasOrigem.origemId))
-    .where(and(eq(regrasOrigem.ativo, true), or(isNull(regrasOrigem.empresaId), eq(regrasOrigem.empresaId, empresaId))))
-    .orderBy(asc(regrasOrigem.prioridade), asc(regrasOrigem.criadoEm));
-
-  // Etiqueta sem nome chega como "#706325": a regra também pode ser escrita com o número
-  const etqs = etiquetas.flatMap((e) => (e.startsWith("#") ? [normalizarNome(e), normalizarNome(e.slice(1))] : [normalizarNome(e)]));
-  const fonteN = fonte ? normalizarNome(fonte) : "";
-  let resumoN: string | null = null; // só normaliza o resumo (longo) se houver regra de resumo
-  for (const { r, origemNome } of regras) {
-    const v = normalizarNome(r.valor);
-    if (!v) continue;
-    const bate = (x: string) => (r.comparacao === "contem" ? x.includes(v) : x === v);
-    let ok: boolean;
-    if (r.campo === "fonte") ok = !!fonteN && bate(fonteN);
-    // Resumo é texto longo: a regra sempre procura o trecho dentro dele (ex.: ADS_CLICKED)
-    else if (r.campo === "resumo") ok = !!resumo && (resumoN ??= normalizarNome(resumo)).includes(v);
-    else ok = etqs.some(bate);
-    if (ok) {
-      if (r.campo === "resumo") return { id: r.id, origemId: r.origemId, descricao: `Regra: resumo contém "${r.valor}" → ${origemNome}` };
-      const onde = r.campo === "fonte" ? "fonte do contato" : "etiqueta";
-      return { id: r.id, origemId: r.origemId, descricao: `Regra: ${onde} ${r.comparacao === "contem" ? "contém" : "="} "${r.valor}" → ${origemNome}` };
-    }
-  }
-  return null;
-}
-
-export type ResultadoIngestao =
-  | {
-      status: "processado";
-      eventoId: string;
-      atendimentoId: string;
-      novoAtendimento: boolean;
-      reenvio: boolean;
-      /** Para o log do container */
-      resumoLog: { cliente: string; telefone: string; vendedor: string; regra: string | null };
-    }
-  | { status: "duplicado"; eventoId: string; atendimentoId: string | null }
-  | { status: "rejeitado"; eventoId: string; erro: string };
-
-export async function ingerirAtribuicao(empresa: Empresa, payload: unknown): Promise<ResultadoIngestao> {
-  let dados: DadosAtribuicao;
-  try {
-    const dicionario = ehFormatoPlataforma(payload)
-      ? new Map(
-          (await db
-            .select({ id: dicionarioEtiquetas.idExterno, nome: dicionarioEtiquetas.nome })
-            .from(dicionarioEtiquetas)
-            .where(eq(dicionarioEtiquetas.empresaId, empresa.id))).map((t) => [t.id, t.nome]),
-        )
-      : undefined;
-    dados = interpretarPayload(payload, dicionario);
-  } catch (e) {
-    const erro = e instanceof Error ? e.message : String(e);
-    const [ev] = await db
-      .insert(webhookEventos)
-      .values({ empresaId: empresa.id, payload: payload ?? {}, status: "rejeitado", erro })
-      .returning({ id: webhookEventos.id });
-    return { status: "rejeitado", eventoId: ev!.id, erro };
-  }
-
-  // Reenvio do mesmo evento pelo bot → não duplica
-  if (dados.eventoId) {
-    const [anterior] = await db
-      .select({ id: webhookEventos.id, atendimentoId: webhookEventos.atendimentoId })
-      .from(webhookEventos)
-      .where(
-        and(
-          eq(webhookEventos.empresaId, empresa.id),
-          eq(webhookEventos.idExterno, dados.eventoId),
-          eq(webhookEventos.status, "processado"),
-        ),
-      );
-    if (anterior) {
-      const [ev] = await db
-        .insert(webhookEventos)
-        .values({
-          empresaId: empresa.id,
-          idExterno: dados.eventoId,
-          payload: payload as object,
-          status: "duplicado",
-          atendimentoId: anterior.atendimentoId,
-        })
-        .returning({ id: webhookEventos.id });
-      return { status: "duplicado", eventoId: ev!.id, atendimentoId: anterior.atendimentoId };
-    }
-  }
-
-  try {
-    return await db.transaction(async (tx) => {
-      // Serializa eventos do mesmo cliente para não criar dois atendimentos em paralelo
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${empresa.id + ":" + (dados.clienteIdExterno ?? dados.clienteTelefone)}))`,
-      );
-
-      const vendedor = await obterVendedor(tx, empresa.id, dados);
-      const cliente = await obterCliente(tx, empresa.id, dados);
-      const regra = await aplicarRegras(tx, empresa.id, dados.etiquetas, dados.fonte, dados.resumo);
-
-      const [evento] = await tx
-        .insert(webhookEventos)
-        .values({
-          empresaId: empresa.id,
-          idExterno: dados.eventoId ?? null,
-          payload: payload as object,
-          status: "processado",
-        })
-        .returning({ id: webhookEventos.id });
-
-      // Atendimento existente? (mesma conversa, ou mesmo cliente dentro da janela)
-      let existente;
-      if (dados.conversaId) {
-        [existente] = await tx
-          .select()
-          .from(atendimentos)
-          .where(and(eq(atendimentos.empresaId, empresa.id), eq(atendimentos.conversaIdExterno, dados.conversaId)));
-      } else {
-        const limite = new Date(dados.atribuidoEm.getTime() - env.JANELA_REATRIBUICAO_DIAS * 86_400_000);
-        [existente] = await tx
-          .select()
-          .from(atendimentos)
-          .where(and(eq(atendimentos.clienteId, cliente.id), gte(atendimentos.ultimaAtribuicaoEm, limite)))
-          .orderBy(desc(atendimentos.ultimaAtribuicaoEm))
-          .limit(1);
+    // ---------- atendentes ----------
+    const equipe = await tx.select().from(atendentes).where(eq(atendentes.empresaId, chatbot.empresaId));
+    const acharOuCriar = async (nome: string, id?: string): Promise<Atendente> => {
+      const n = nomeDeAtendente(nome);
+      let a =
+        (id && equipe.find((x) => x.idExterno === id)) ||
+        equipe.find((x) => x.nomeNormalizado === n || x.apelidos.includes(n));
+      if (!a && !id) {
+        // No histórico vem só o primeiro nome: casa com quem tem esse primeiro nome (se for um só)
+        const mesmos = equipe.filter((x) => x.nomeNormalizado.split(" ")[0] === n);
+        if (mesmos.length === 1) a = mesmos[0];
       }
+      if (a) {
+        if (id && !a.idExterno) {
+          await tx.update(atendentes).set({ idExterno: id }).where(eq(atendentes.id, a.id));
+          a.idExterno = id;
+        }
+        if (n !== a.nomeNormalizado && !a.apelidos.includes(n) && n.split(" ").length === 1) {
+          a.apelidos = [...a.apelidos, n];
+          await tx.update(atendentes).set({ apelidos: a.apelidos }).where(eq(atendentes.id, a.id));
+        }
+        return a;
+      }
+      const [novo] = await tx
+        .insert(atendentes)
+        .values({ empresaId: chatbot.empresaId, nome: nome.replace(/\s+/g, " ").trim(), nomeNormalizado: n, idExterno: id ?? null })
+        .onConflictDoUpdate({ target: [atendentes.empresaId, atendentes.nomeNormalizado], set: { ativo: true } })
+        .returning();
+      equipe.push(novo!);
+      return novo!;
+    };
+    const atribuido = nomeAtendente ? await acharOuCriar(nomeAtendente, idAtendente) : null;
+    const humanoPorNome = new Map<string, Atendente>();
+    for (const m of msgs) {
+      if (m.tipo !== "humano") continue;
+      const n = nomeDeAtendente(m.remetente);
+      if (humanoPorNome.has(n)) continue;
+      // O primeiro nome do atendente atribuído tem preferência
+      const doAtribuido = atribuido && atribuido.nomeNormalizado.split(" ")[0] === n ? atribuido : null;
+      humanoPorNome.set(n, doAtribuido ?? (await acharOuCriar(m.remetente)));
+    }
 
-      /** Origem por regra: definida na hora; a IA (se ligada) completa só as etiquetas */
-      const camposRegra = (manual: boolean) =>
-        manual
-          ? {}
-          : regra
-            ? {
-                origemId: regra.origemId,
-                origemRegraId: regra.id,
-                classificacaoStatus: agenteAtivo() ? ("pendente" as const) : ("classificado" as const),
-                classificacaoConfianca: 1,
-                classificacaoJustificativa: regra.descricao,
-                classificacaoSugestao: null,
-                classificacaoTentativas: 0,
-                classificacaoErro: null,
-                classificadoEm: new Date(),
-              }
-            : { origemRegraId: null };
+    // ---------- atendimentos ----------
+    let novos = 0;
+    let atualizados = 0;
+    let mensagensNovas = 0;
+    let origemRegra: string | null = null;
+    const limiteIa = Date.now() - JANELA_IA_DIAS * 86_400_000;
+
+    const tratados: string[] = [];
+    for (const [i, s] of sessoes.entries()) {
+      const ultima = i === sessoes.length - 1;
+      const inicio = s.mensagens[0]!.em;
+      const fim = s.mensagens.at(-1)!.em;
+      // Mesmo atendimento: mesma chave, ou mesmo período (o início pode ter sido cortado no envio anterior)
+      const [existente] =
+        (await tx.select().from(atendimentos).where(and(eq(atendimentos.contatoId, contato!.id), eq(atendimentos.chave, s.chave)))).concat(
+          await tx
+            .select()
+            .from(atendimentos)
+            .where(
+              and(
+                eq(atendimentos.contatoId, contato!.id),
+                lt(atendimentos.inicioEm, fim),
+                gt(atendimentos.ultimaMsgEm, inicio),
+                // não casa com um atendimento que este mesmo envio acabou de gravar
+                tratados.length ? notInArray(atendimentos.id, tratados) : undefined,
+              ),
+            )
+            .limit(1),
+        );
+
+      // Junta com o que já estava guardado desse atendimento (envios anteriores podem ter mais mensagens)
+      let todas: Mensagem[] = s.mensagens;
+      if (existente) {
+        const guardadas = await tx.select().from(mensagens).where(eq(mensagens.atendimentoId, existente.id));
+        const conhecidas = new Set(s.mensagens.map((m) => m.chave));
+        const extras: Mensagem[] = guardadas
+          .filter((g) => !conhecidas.has(g.chave))
+          .map((g) => ({ em: g.enviadaEm, seq: g.seq, tipo: g.remetenteTipo, remetente: g.remetenteNome, texto: g.texto, chave: g.chave }));
+        if (extras.length) todas = juntarHistoricos(s.mensagens, extras);
+      }
+      const t = calcularTempos(todas, chatbot.horario, fuso);
+      const humanosIds = t.humanos.map((h) => humanoPorNome.get(nomeDeAtendente(h.remetente))).filter((x): x is Atendente => !!x);
+      const principal = (ultima && atribuido) || humanosIds.at(-1) || null;
+      const novaChave = s.protocolo ? s.chave : (existente?.protocolo ? existente.chave : s.chave);
+
+      // Regras de origem e dados de anúncio/fonte valem para o atendimento atual (o envio é sobre ele)
+      const textoRegras = ultima ? [todas.map((m) => m.texto).join("\n"), ...Object.values(anuncio).filter(Boolean)].join("\n") : "";
+      const regra =
+        ultima && existente?.classificacaoStatus !== "manual"
+          ? await aplicarRegras(tx, chatbot.empresaId, { etiquetas: etiquetasNomes, fonte, canal, anuncioPlataforma: anuncio.plataforma, texto: textoRegras })
+          : null;
+      if (ultima && regra) origemRegra = regra.descricao;
+
+      const mudou = !existente || existente.ultimaMsgEm.getTime() !== t.ultimaMsgEm.getTime() || existente.msgsCliente + existente.msgsBot + existente.msgsApi + existente.msgsHumano !== todas.length;
+      const paraIa = fim.getTime() >= limiteIa && existente?.classificacaoStatus !== "manual" && (mudou || !!regra !== !!existente?.origemRegraId);
+
+      const valores = {
+        empresaId: chatbot.empresaId,
+        chatbotId: chatbot.id,
+        contatoId: contato!.id,
+        chave: novaChave,
+        protocolo: s.protocolo ?? existente?.protocolo ?? null,
+        inicioEm: t.inicioEm,
+        ultimaMsgEm: t.ultimaMsgEm,
+        primeiraMsgClienteEm: t.primeiraMsgClienteEm,
+        transferenciaEm: t.transferenciaEm,
+        primeiraRespostaHumanaEm: t.primeiraRespostaHumanaEm,
+        atendenteId: principal?.id ?? existente?.atendenteId ?? null,
+        primeiroAtendenteId: humanosIds[0]?.id ?? null,
+        msgsCliente: t.msgsCliente,
+        msgsBot: t.msgsBot,
+        msgsApi: t.msgsApi,
+        msgsHumano: t.msgsHumano,
+        tempoAteHumanoS: t.tempoAteHumanoS,
+        tempoPrimeiraRespostaS: t.tempoPrimeiraRespostaS,
+        tempoMedioRespostaS: t.tempoMedioRespostaS,
+        tempoMaxRespostaS: t.tempoMaxRespostaS,
+        respostasMedidas: t.respostasMedidas,
+        esperasAcima30: t.esperasAcima30,
+        semResposta: t.semResposta,
+        precisouHumano: t.precisouHumano,
+        semHumano: t.semHumano,
+        atendidoAte30: t.atendidoAte30,
+        duracaoS: t.duracaoS,
+        transferencias: t.transferencias,
+        foraHorario: t.foraHorario,
+        leadNovo:
+          !!dadosContato.criadoNaPlataformaEm &&
+          dadosContato.criadoNaPlataformaEm.getTime() >= t.inicioEm.getTime() - 2 * 3600_000 &&
+          dadosContato.criadoNaPlataformaEm.getTime() <= t.ultimaMsgEm.getTime(),
+        ...(ultima && {
+          fonte,
+          canal,
+          refEntrada: campo("Ref Entrada") ?? null,
+          anuncioPlataforma: anuncio.plataforma ?? null,
+          anuncio: temAnuncio ? anuncio : null,
+        }),
+        ...(ultima && !existente?.cidade && dadosContato.cidade ? { cidade: dadosContato.cidade } : {}),
+        ...(regra && { origemId: regra.origemId, origemRegraId: regra.id }),
+        ...(paraIa && { classificacaoStatus: "pendente" as const, classificacaoTentativas: 0, classificacaoErro: null }),
+        ...(!existente && !paraIa ? { classificacaoStatus: "classificado" as const } : {}),
+        atualizadoEm: new Date(),
+      };
 
       let atendimentoId: string;
-      const novoAtendimento = !existente;
-      let reenvio = false;
-
       if (existente) {
+        await tx.update(atendimentos).set(valores).where(eq(atendimentos.id, existente.id));
         atendimentoId = existente.id;
-        const manual = existente.classificacaoStatus === "manual";
-        const maisRecente = dados.atribuidoEm >= existente.ultimaAtribuicaoEm;
-        // Mesmo consultor de novo = atualização dos dados, não é repasse
-        reenvio = vendedor.id === existente.vendedorAtualId;
-        const mudouConteudo =
-          (dados.resumo && dados.resumo !== existente.resumo) ||
-          (dados.fonte ?? null) !== (existente.fonteInformada ?? null) ||
-          dados.etiquetas.join("|") !== existente.etiquetasPlataforma.join("|");
-
-        await tx
-          .update(atendimentos)
-          .set({
-            atualizadoEm: new Date(),
-            ...(!reenvio && { totalAtribuicoes: sql`${atendimentos.totalAtribuicoes} + 1` }),
-            ...(maisRecente && {
-              vendedorAtualId: vendedor.id,
-              ...(!reenvio && { ultimaAtribuicaoEm: dados.atribuidoEm }),
-              ...(dados.resumo && { resumo: dados.resumo }),
-              ...(dados.fonte && { fonteInformada: dados.fonte }),
-              etiquetasPlataforma: dados.etiquetas,
-              camposPlataforma: dados.campos,
-            }),
-            ...(dados.atribuidoEm < existente.primeiraAtribuicaoEm && { primeiraAtribuicaoEm: dados.atribuidoEm }),
-            // Conteúdo novo → reclassifica (a não ser que um humano já tenha classificado)
-            ...(maisRecente &&
-              mudouConteudo &&
-              !manual && {
-                classificacaoStatus: "pendente" as const,
-                classificacaoTentativas: 0,
-                classificacaoErro: null,
-              }),
-            ...(maisRecente && mudouConteudo && camposRegra(manual)),
-          })
-          .where(eq(atendimentos.id, existente.id));
+        tratados.push(atendimentoId);
+        if (mudou) atualizados++;
       } else {
         const [novo] = await tx
           .insert(atendimentos)
-          .values({
-            empresaId: empresa.id,
-            clienteId: cliente.id,
-            conversaIdExterno: dados.conversaId ?? null,
-            vendedorAtualId: vendedor.id,
-            resumo: dados.resumo,
-            fonteInformada: dados.fonte ?? null,
-            etiquetasPlataforma: dados.etiquetas,
-            camposPlataforma: dados.campos,
-            primeiraAtribuicaoEm: dados.atribuidoEm,
-            ultimaAtribuicaoEm: dados.atribuidoEm,
-            ...camposRegra(false),
-          })
+          .values(valores)
+          .onConflictDoUpdate({ target: [atendimentos.contatoId, atendimentos.chave], set: valores })
           .returning({ id: atendimentos.id });
         atendimentoId = novo!.id;
+        tratados.push(atendimentoId);
+        novos++;
       }
 
-      // Linha do tempo: só registra quando muda de vendedor (ou é a primeira vez)
-      if (!reenvio) {
-        await tx.insert(atribuicoes).values({
-          atendimentoId,
-          vendedorId: vendedor.id,
-          resumo: dados.resumo,
-          fonte: dados.fonte ?? null,
-          dadosExtras: dados.extras,
-          eventoId: evento!.id,
-          atribuidoEm: dados.atribuidoEm,
-        });
-      }
+      // Humanos que falaram, na ordem
+      await tx.delete(atendimentoAtendentes).where(eq(atendimentoAtendentes.atendimentoId, atendimentoId));
+      const vistos = new Set<string>();
+      const linhas = t.humanos
+        .map((h) => ({ h, a: humanoPorNome.get(nomeDeAtendente(h.remetente)) }))
+        .filter(({ a }) => a && !vistos.has(a.id) && vistos.add(a.id))
+        .map(({ h, a }, ordem) => ({ atendimentoId, atendenteId: a!.id, ordem, primeiraMsgEm: h.primeiraMsgEm, mensagens: h.mensagens }));
+      if (linhas.length) await tx.insert(atendimentoAtendentes).values(linhas);
 
-      await tx.update(webhookEventos).set({ atendimentoId }).where(eq(webhookEventos.id, evento!.id));
+      // Mensagens (as que já existiam só são religadas a este atendimento)
+      const novasMsgs = await gravarMensagens(tx, contato!.id, atendimentoId, s, humanoPorNome);
+      mensagensNovas += novasMsgs;
+    }
 
-      return {
-        status: "processado" as const,
-        eventoId: evento!.id,
-        atendimentoId,
-        novoAtendimento,
-        reenvio,
-        resumoLog: { cliente: dados.clienteNome, telefone: dados.clienteTelefone, vendedor: vendedor.nome, regra: regra?.descricao ?? null },
-      };
-    });
-  } catch (e) {
-    const erro = e instanceof Error ? e.message : String(e);
-    console.error("Falha ao processar webhook:", e);
-    const [ev] = await db
+    const [evento] = await tx
       .insert(webhookEventos)
-      .values({ empresaId: empresa.id, idExterno: null, payload: payload as object, status: "rejeitado", erro })
+      .values({
+        empresaId: chatbot.empresaId,
+        chatbotId: chatbot.id,
+        contatoId: contato!.id,
+        payload: p,
+        tamanhoBytes,
+        status: "processado",
+        resultado: {
+          sessoes: sessoes.length,
+          atendimentos_novos: novos,
+          atendimentos_atualizados: atualizados,
+          mensagens_novas: mensagensNovas,
+          mensagens_no_historico: msgs.length,
+          momento_envio: campo("Momento Envio") ?? null,
+          origem_regra: origemRegra,
+        },
+      })
       .returning({ id: webhookEventos.id });
-    return { status: "rejeitado", eventoId: ev!.id, erro: "Erro interno ao processar o evento" };
+
+    return {
+      eventoId: evento!.id,
+      contatoId: contato!.id,
+      contato: dadosContato.nome,
+      telefone: dadosContato.telefone,
+      atendente: atribuido?.nome ?? null,
+      sessoes: sessoes.length,
+      atendimentosNovos: novos,
+      atendimentosAtualizados: atualizados,
+      mensagensNovas,
+      origemRegra,
+    };
+  });
+}
+
+async function gravarMensagens(tx: Tx, contatoId: string, atendimentoId: string, s: Sessao, humanos: Map<string, Atendente>): Promise<number> {
+  if (!s.mensagens.length) return 0;
+  const linhas = s.mensagens.map((m) => ({
+    contatoId,
+    atendimentoId,
+    enviadaEm: m.em,
+    seq: m.seq,
+    remetenteTipo: m.tipo,
+    remetenteNome: m.remetente,
+    atendenteId: m.tipo === "humano" ? (humanos.get(nomeDeAtendente(m.remetente))?.id ?? null) : null,
+    texto: m.texto,
+    chave: m.chave,
+  }));
+  const antes = await tx
+    .select({ chave: mensagens.chave })
+    .from(mensagens)
+    .where(and(eq(mensagens.contatoId, contatoId), inArray(mensagens.chave, linhas.map((l) => l.chave))));
+  for (let i = 0; i < linhas.length; i += 200) {
+    await tx
+      .insert(mensagens)
+      .values(linhas.slice(i, i + 200))
+      .onConflictDoUpdate({ target: [mensagens.contatoId, mensagens.chave], set: { atendimentoId, seq: sql`excluded.seq` } });
   }
+  return linhas.length - antes.length;
 }

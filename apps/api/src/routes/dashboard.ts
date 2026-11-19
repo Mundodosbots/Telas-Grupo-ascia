@@ -1,119 +1,122 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db/client";
-import { atendimentoEtiquetas, atendimentos, empresas, etiquetas, origens, vendedores, webhookEventos } from "../db/schema";
+import { atendimentos, webhookEventos } from "../db/schema";
 import { env } from "../env";
 import { protegido } from "../lib/auth";
 import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
-import { agenteAtivo } from "../services/classificador";
+import { agenteAtivo } from "../services/organizador";
 
-const n = sql<number>`count(*)::int`;
+/** Mesmas métricas para o total e para cada agrupamento */
+const METRICAS = sql.raw(`
+  count(*)::int as total,
+  count(*) filter (where a.precisou_humano)::int as humano,
+  count(*) filter (where a.sem_humano)::int as sem_humano,
+  count(*) filter (where a.atendido_ate_30)::int as ate_30,
+  count(*) filter (where a.tempo_ate_humano_s is not null)::int as com_tempo,
+  round(avg(a.tempo_ate_humano_s))::int as tempo_ate_humano,
+  round(avg(a.tempo_primeira_resposta_s))::int as tempo_primeira_resposta,
+  round(avg(a.tempo_medio_resposta_s))::int as tempo_medio_resposta,
+  max(a.tempo_max_resposta_s)::int as tempo_max_resposta,
+  coalesce(sum(a.esperas_acima_30), 0)::int as esperas_30,
+  coalesce(sum(a.respostas_medidas), 0)::int as respostas,
+  coalesce(sum(a.sem_resposta), 0)::int as sem_resposta,
+  coalesce(sum(a.transferencias), 0)::int as transferencias,
+  count(*) filter (where a.lead_novo)::int as leads_novos,
+  count(*) filter (where a.fora_horario)::int as fora_horario,
+  round(avg(a.duracao_s) filter (where a.precisou_humano))::int as duracao
+`);
+
+type Linha = Record<string, any>;
+const camel = (r: Linha) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase()), v]));
+
+async function agrupar(onde: SQL, chave: string, rotulo: string, extras = "", juntar = "", rotuloAgregado = false) {
+  const r = await db.execute(sql`
+    select ${sql.raw(chave)} as chave, ${sql.raw(rotulo)} as rotulo ${sql.raw(extras)}, ${METRICAS}
+    from atendimentos a ${sql.raw(juntar)}
+    where ${onde}
+    group by 1 ${sql.raw(rotuloAgregado ? "" : extras ? ", 2, 3" : ", 2")}
+    order by total desc
+    limit 60`);
+  return [...r].map(camel);
+}
+
+/** Todas as métricas do painel para um filtro (usado pela tela e pelo assistente de IA) */
+export async function calcularPainel(empresaId: string, query: FiltroAtendimentos) {
+    // As condições usam a tabela "atendimentos"; nas consultas abaixo ela tem o apelido "a"
+    const onde = sql`a.id in (select id from atendimentos where ${and(...condicoesAtendimentos(empresaId, query))})`;
+    const tz = env.TZ_RELATORIOS.replace(/'/g, "");
+
+    const [resumo] = [...(await db.execute(sql`select ${METRICAS} from atendimentos a where ${onde}`))].map(camel);
+    const [porChatbot, porDepartamento, porCidade, porCanal, porFonte, porOrigem, porAnuncio, porAtendente, porTime] = await Promise.all([
+      agrupar(onde, "a.chatbot_id", "c.nome", ", c.cor", "join chatbots c on c.id = a.chatbot_id"),
+      agrupar(onde, "a.departamento_id", "coalesce(d.nome, 'Sem departamento')", ", d.cor", "left join departamentos d on d.id = a.departamento_id"),
+      agrupar(onde, "lower(coalesce(a.cidade, ''))", "coalesce(initcap(min(a.cidade)), 'Não informada')", "", "", true),
+      agrupar(onde, "lower(coalesce(a.canal, ''))", "coalesce(min(a.canal), 'Não informado')", "", "", true),
+      agrupar(onde, "lower(coalesce(a.fonte, ''))", "coalesce(min(a.fonte), 'Não informada')", "", "", true),
+      agrupar(onde, "a.origem_id", "coalesce(o.nome, 'Sem origem')", ", o.cor", "left join origens o on o.id = a.origem_id"),
+      agrupar(onde, "lower(coalesce(a.anuncio_plataforma, ''))", "coalesce(min(a.anuncio_plataforma), 'Sem anúncio')", "", "", true),
+      agrupar(onde, "a.atendente_id", "coalesce(t.nome, 'Sem atendente')", ", tm.nome as time_nome", "left join atendentes t on t.id = a.atendente_id left join times tm on tm.id = t.time_id"),
+      agrupar(onde, "t.time_id", "coalesce(tm.nome, 'Sem time')", ", tm.cor", "left join atendentes t on t.id = a.atendente_id left join times tm on tm.id = t.time_id"),
+    ]);
+
+    // Transferências por atendente: quem passou adiante (feitas) e quem recebeu
+    const transferencias = [
+      ...(await db.execute(sql`
+        select x.atendente_id as chave, t.nome as rotulo,
+          count(*) filter (where exists (select 1 from atendimento_atendentes y where y.atendimento_id = x.atendimento_id and y.ordem = x.ordem + 1))::int as feitas,
+          count(*) filter (where x.ordem > 0)::int as recebidas,
+          count(*)::int as participou
+        from atendimento_atendentes x
+        join atendentes t on t.id = x.atendente_id
+        join atendimentos a on a.id = x.atendimento_id
+        where ${onde}
+        group by 1, 2
+        having count(*) filter (where x.ordem > 0) > 0
+            or count(*) filter (where exists (select 1 from atendimento_atendentes y where y.atendimento_id = x.atendimento_id and y.ordem = x.ordem + 1)) > 0
+        order by feitas desc
+        limit 30`)),
+    ].map(camel);
+
+    const serie = [
+      ...(await db.execute(sql`
+        select to_char(a.inicio_em at time zone ${tz}, 'YYYY-MM-DD') as dia, a.chatbot_id as chatbot_id,
+          count(*)::int as total, count(*) filter (where a.precisou_humano)::int as humano, count(*) filter (where a.sem_humano)::int as sem_humano
+        from atendimentos a where ${onde}
+        group by 1, 2 order by 1`)),
+    ].map(camel);
+
+    // Quando os clientes chegam: dia da semana × hora (1ª mensagem do cliente)
+    const horarios = [
+      ...(await db.execute(sql`
+        select extract(dow from a.primeira_msg_cliente_em at time zone ${tz})::int as dia_semana,
+               extract(hour from a.primeira_msg_cliente_em at time zone ${tz})::int as hora,
+               count(*)::int as total
+        from atendimentos a where ${onde} and a.primeira_msg_cliente_em is not null
+        group by 1, 2`)),
+    ].map(camel);
+
+    return { resumo, porChatbot, porDepartamento, porCidade, porCanal, porFonte, porOrigem, porAnuncio, porAtendente, porTime, transferencias, serie, horarios };
+}
 
 export const rotasDashboard = new Elysia({ prefix: "/api" })
-  .use(protegido())
-  /**
-   * Todas as métricas do painel num só pedido.
-   * A contagem é sempre do vendedor ATUAL (último atribuído) e o período
-   * olha a data da última atribuição.
-   */
-  .get("/dashboard", async ({ query }) => {
-    const filtro = query as FiltroAtendimentos;
-    const onde = and(...condicoesAtendimentos(filtro));
-
-    const [resumo] = await db
-      .select({
-        total: n,
-        aRevisar: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('revisar','erro'))::int`,
-        pendentes: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('pendente','processando'))::int`,
-        semOrigem: sql<number>`count(*) filter (where ${atendimentos.origemId} is null)::int`,
-        reatribuidos: sql<number>`count(*) filter (where ${atendimentos.totalAtribuicoes} > 1)::int`,
-        classificadosIa: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} = 'classificado')::int`,
-        vendedores: sql<number>`count(distinct ${atendimentos.vendedorAtualId})::int`,
-      })
-      .from(atendimentos)
-      .where(onde);
-
-    const porEmpresa = await db
-      .select({ id: empresas.id, nome: empresas.nome, cor: empresas.cor, total: n })
-      .from(atendimentos)
-      .innerJoin(empresas, eq(empresas.id, atendimentos.empresaId))
-      .where(onde)
-      .groupBy(empresas.id)
-      .orderBy(desc(n));
-
-    const porVendedor = await db
-      .select({
-        id: vendedores.id,
-        nome: vendedores.nome,
-        empresaId: empresas.id,
-        empresaNome: empresas.nome,
-        empresaCor: empresas.cor,
-        total: n,
-        reatribuidos: sql<number>`count(*) filter (where ${atendimentos.totalAtribuicoes} > 1)::int`,
-      })
-      .from(atendimentos)
-      .innerJoin(vendedores, eq(vendedores.id, atendimentos.vendedorAtualId))
-      .innerJoin(empresas, eq(empresas.id, vendedores.empresaId))
-      .where(onde)
-      .groupBy(vendedores.id, empresas.id)
-      .orderBy(desc(n), vendedores.nome);
-
-    const porOrigem = await db
-      .select({ id: origens.id, nome: origens.nome, cor: origens.cor, total: n })
-      .from(atendimentos)
-      .leftJoin(origens, eq(origens.id, atendimentos.origemId))
-      .where(onde)
-      .groupBy(origens.id)
-      .orderBy(desc(n));
-
-    const porEtiqueta = await db
-      .select({ id: etiquetas.id, nome: etiquetas.nome, cor: etiquetas.cor, total: n })
-      .from(atendimentos)
-      .innerJoin(atendimentoEtiquetas, eq(atendimentoEtiquetas.atendimentoId, atendimentos.id))
-      .innerJoin(etiquetas, eq(etiquetas.id, atendimentoEtiquetas.etiquetaId))
-      .where(onde)
-      .groupBy(etiquetas.id)
-      .orderBy(desc(n))
-      .limit(15);
-
-    const dia = sql<string>`to_char(${atendimentos.ultimaAtribuicaoEm} at time zone ${env.TZ_RELATORIOS}, 'YYYY-MM-DD')`;
-    const serie = await db
-      .select({ dia, empresaId: atendimentos.empresaId, total: n })
-      .from(atendimentos)
-      .where(onde)
-      // Agrupa pela posição: o fuso entra como parâmetro e o Postgres não casaria a expressão repetida
-      .groupBy(sql`1`, atendimentos.empresaId)
-      .orderBy(sql`1`);
-
-    /** Vendedor × origem: "quantos do Carlos vieram de marketing?" */
-    const vendedorOrigem = await db
-      .select({ vendedorId: atendimentos.vendedorAtualId, origemId: atendimentos.origemId, total: n })
-      .from(atendimentos)
-      .where(onde)
-      .groupBy(atendimentos.vendedorAtualId, atendimentos.origemId);
-
-    return { resumo, porEmpresa, porVendedor, porOrigem, porEtiqueta, serie, vendedorOrigem };
-  })
-  /** Situação geral para avisos no topo da tela */
-  .get("/status", async () => {
-    const [fila] = await db
+  .use(protegido({ empresa: true }))
+  .get("/painel", ({ query, empresaId }) => calcularPainel(empresaId, query as FiltroAtendimentos))
+  /** Situação geral (avisos no topo e atualização automática das telas) */
+  .get("/status", async ({ empresaId }) => {
+    const [fila] = (await db
       .select({
         pendentes: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('pendente','processando'))::int`,
-        aRevisar: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('revisar','erro'))::int`,
-        // Muda sempre que algum atendimento muda: as telas abertas usam para se atualizar sozinhas
+        erros: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} = 'erro')::int`,
         ultimaAlteracao: sql<string | null>`max(${atendimentos.atualizadoEm})::text`,
       })
-      .from(atendimentos);
+      .from(atendimentos)
+      .where(eq(atendimentos.empresaId, empresaId))) as [{ pendentes: number; erros: number; ultimaAlteracao: string | null }];
     const [ultimoEvento] = await db
       .select({ recebidoEm: webhookEventos.recebidoEm, status: webhookEventos.status })
       .from(webhookEventos)
+      .where(eq(webhookEventos.empresaId, empresaId))
       .orderBy(desc(webhookEventos.recebidoEm))
       .limit(1);
-    return {
-      agenteAtivo: agenteAtivo(),
-      modelo: agenteAtivo() ? env.OPENAI_MODEL : null,
-      fusoHorario: env.TZ_RELATORIOS,
-      ...fila,
-      ultimoEvento: ultimoEvento ?? null,
-    };
+    return { agenteAtivo: agenteAtivo(), modelo: agenteAtivo() ? env.OPENAI_MODEL : null, fusoHorario: env.TZ_RELATORIOS, ...fila, ultimoEvento: ultimoEvento ?? null };
   });

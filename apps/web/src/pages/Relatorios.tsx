@@ -1,75 +1,58 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileDown, Printer, Sheet } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { api, qs, type Dashboard, type ListaRelatorio } from "../api";
+import { api, qs, type Grupo, type ListaRelatorio, type Painel } from "../api";
 import { useAuth } from "../auth";
 import { BarraFiltros } from "../components/Filtros";
 import { Titulo } from "../components/Layout";
-import { Alerta, Botao, BotaoCopiar, Campo, Cartao, Carregando, cx, Ponto, rotuloStatus } from "../components/ui";
-import { useEmpresas, useEtiquetas, useFiltros, useOrigens, useVendedores } from "../hooks";
-import { data, dataHora, isoDia, numero, pct, telefone } from "../lib/formato";
+import { Alerta, Botao, BotaoCopiar, Campo, Cartao, Carregando, cx, Ponto } from "../components/ui";
+import { useAtendentes, useChatbots, useDepartamentos, useFiltros, useOrigens } from "../hooks";
+import { data, dataHora, duracao, isoDia, numero, porcento, telefone } from "../lib/formato";
+import { usePainel } from "./Dashboard";
 
 const SECOES = [
-  { id: "empresas", rotulo: "Por empresa" },
+  { id: "chatbots", rotulo: "Por chatbot" },
+  { id: "atendentes", rotulo: "Atendentes e tempos" },
+  { id: "departamentos", rotulo: "Por departamento" },
   { id: "origens", rotulo: "Por origem" },
-  { id: "vendedores", rotulo: "Por vendedor" },
-  { id: "cruzamento", rotulo: "Vendedor × origem" },
+  { id: "cidades", rotulo: "Por cidade" },
+  { id: "canais", rotulo: "Canal e anúncios" },
   { id: "lista", rotulo: "Lista de atendimentos" },
 ] as const;
 type Secao = (typeof SECOES)[number]["id"];
 
-/** Colunas de origem no cruzamento vendedor × origem (as demais somam em "Outras") */
-const MAX_COLUNAS_ORIGEM = 5;
-
 export function PaginaRelatorios() {
-  const { usuario } = useAuth();
-  const { filtros } = useFiltros();
+  const { usuario, empresa } = useAuth();
+  const { consulta } = useFiltros();
   const qc = useQueryClient();
-  const [titulo, setTitulo] = useState("Relatório de atendimentos por vendedor e origem");
+  const [titulo, setTitulo] = useState("Relatório de atendimento");
   const [secoes, setSecoes] = useState<Set<Secao>>(new Set(SECOES.map((s) => s.id)));
   const [baixando, setBaixando] = useState(false);
   const [erroPlanilha, setErroPlanilha] = useState<string | null>(null);
-
-  const consulta = qs({
-    empresa_id: filtros.empresa_id,
-    inicio: filtros.inicio,
-    fim: filtros.fim,
-    vendedor_id: filtros.vendedor_id,
-    origem_id: filtros.origem_id,
-    etiqueta_id: filtros.etiqueta_id,
-  });
-  const resumo = useQuery({
-    queryKey: ["dashboard", consulta],
-    queryFn: () => api<Dashboard>(`/dashboard${consulta}`),
-    placeholderData: (anterior) => anterior,
-  });
-  const chaveLista = ["relatorio-lista", consulta];
-  const buscarLista = () => api<ListaRelatorio>(`/atendimentos/relatorio${consulta}`);
-  const lista = useQuery({ queryKey: chaveLista, queryFn: buscarLista, enabled: secoes.has("lista"), placeholderData: (a) => a });
-
-  const nomeArquivo = `relatorio-atribuicoes-${isoDia(new Date())}`;
+  const painel = usePainel();
+  const q = qs(consulta);
+  const chaveLista = ["relatorio-lista", empresa?.id, q];
+  const buscarLista = () => api<ListaRelatorio>(`/atendimentos/relatorio${q}`);
+  const lista = useQuery({ queryKey: chaveLista, queryFn: buscarLista, enabled: secoes.has("lista") && !!empresa, placeholderData: (a) => a });
+  const nomeArquivo = `relatorio-atendimento-${isoDia(new Date())}`;
 
   function gerarPdf() {
-    // O navegador usa o título da página como nome do PDF
     const anterior = document.title;
     document.title = nomeArquivo;
     window.addEventListener("afterprint", () => (document.title = anterior), { once: true });
     window.print();
   }
-
   async function baixarPlanilha() {
     setBaixando(true);
     setErroPlanilha(null);
     try {
-      const d = await qc.fetchQuery({ queryKey: chaveLista, queryFn: buscarLista, staleTime: 10_000 });
-      baixarCsv(`${nomeArquivo}.csv`, d);
+      baixarCsv(`${nomeArquivo}.csv`, await qc.fetchQuery({ queryKey: chaveLista, queryFn: buscarLista, staleTime: 10_000 }));
     } catch (e) {
       setErroPlanilha((e as Error).message);
     } finally {
       setBaixando(false);
     }
   }
-
   const alternar = (id: Secao) =>
     setSecoes((s) => {
       const n = new Set(s);
@@ -81,12 +64,8 @@ export function PaginaRelatorios() {
   return (
     <>
       <div className="print:hidden">
-        <Titulo
-          titulo="Relatórios"
-          descricao="Escolha os filtros, confira a prévia e gere o PDF ou a planilha para enviar. O link desta página guarda os filtros."
-        />
-        <BarraFiltros extras={["vendedor", "origem", "etiqueta"]} />
-
+        <Titulo titulo="Relatórios" descricao="Escolha os filtros, confira a prévia e gere o PDF ou a planilha. O link desta página guarda os filtros." />
+        <BarraFiltros extras={["atendente", "time", "departamento", "origem", "cidade"]} />
         <Cartao className="mb-5">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div className="grid gap-3">
@@ -95,14 +74,14 @@ export function PaginaRelatorios() {
                 <legend className="mb-1.5 text-xs font-medium text-ink-2">Incluir no relatório</legend>
                 {SECOES.map((s) => (
                   <label key={s.id} className="inline-flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={secoes.has(s.id)} onChange={() => alternar(s.id)} />
+                    <input type="checkbox" className="size-4" checked={secoes.has(s.id)} onChange={() => alternar(s.id)} />
                     {s.rotulo}
                   </label>
                 ))}
               </fieldset>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Botao variante="primario" onClick={gerarPdf} disabled={!resumo.data}>
+              <Botao variante="primario" onClick={gerarPdf} disabled={!painel.data}>
                 <Printer className="size-4" /> Gerar PDF
               </Botao>
               <Botao onClick={baixarPlanilha} carregando={baixando}>
@@ -117,69 +96,38 @@ export function PaginaRelatorios() {
           {erroPlanilha && <Alerta>{erroPlanilha}</Alerta>}
         </Cartao>
       </div>
-
-      {resumo.error ? (
-        <Alerta>{(resumo.error as Error).message}</Alerta>
-      ) : !resumo.data ? (
+      {painel.error ? (
+        <Alerta>{(painel.error as Error).message}</Alerta>
+      ) : !painel.data ? (
         <Carregando />
       ) : (
-        <Documento
-          titulo={titulo}
-          d={resumo.data}
-          secoes={secoes}
-          lista={secoes.has("lista") ? lista.data : undefined}
-          listaCarregando={secoes.has("lista") && lista.isLoading}
-          autor={usuario?.nome ?? ""}
-        />
+        <Documento titulo={titulo} d={painel.data} secoes={secoes} lista={secoes.has("lista") ? lista.data : undefined} autor={usuario?.nome ?? ""} empresaNome={empresa?.nome ?? ""} />
       )}
     </>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Documento: o mesmo componente é a prévia na tela e o PDF impresso   */
-/* ------------------------------------------------------------------ */
-
-function Documento({
-  titulo,
-  d,
-  secoes,
-  lista,
-  listaCarregando,
-  autor,
-}: {
-  titulo: string;
-  d: Dashboard;
-  secoes: Set<Secao>;
-  lista?: ListaRelatorio;
-  listaCarregando: boolean;
-  autor: string;
-}) {
+function Documento({ titulo, d, secoes, lista, autor, empresaNome }: { titulo: string; d: Painel; secoes: Set<Secao>; lista?: ListaRelatorio; autor: string; empresaNome: string }) {
   const { filtros } = useFiltros();
-  const empresas = useEmpresas().data ?? [];
-  const vendedores = useVendedores().data ?? [];
+  const chatbots = useChatbots().data ?? [];
+  const atendentes = useAtendentes().data ?? [];
+  const departamentos = useDepartamentos().data ?? [];
   const origens = useOrigens().data ?? [];
-  const etiquetas = useEtiquetas().data ?? [];
-  const total = d.resumo.total;
-
-  const nomeDe = <T extends { id: string; nome: string }>(lista: T[], id?: string, todos = "Todas") =>
-    id ? (lista.find((x) => x.id === id)?.nome ?? "—") : todos;
-  const periodo = filtros.inicio && filtros.fim ? `${data(`${filtros.inicio}T12:00:00`)} a ${data(`${filtros.fim}T12:00:00`)}` : "Todo o período";
+  const r = d.resumo;
+  const nomeDe = (l: { id: string; nome: string }[], id?: string, todos = "Todos") => (id ? (l.find((x) => x.id === id)?.nome ?? "—") : todos);
   const filtrosTexto: [string, string][] = [
-    ["Período", periodo],
-    ["Empresa", nomeDe(empresas, filtros.empresa_id)],
-    ["Vendedor", nomeDe(vendedores, filtros.vendedor_id, "Todos")],
-    ["Origem", filtros.origem_id === "nenhuma" ? "Sem origem identificada" : nomeDe(origens, filtros.origem_id)],
-    ["Etiqueta", nomeDe(etiquetas, filtros.etiqueta_id)],
+    ["Período", filtros.inicio && filtros.fim ? `${data(`${filtros.inicio}T12:00:00`)} a ${data(`${filtros.fim}T12:00:00`)}` : "Todo o período"],
+    ["Chatbot", nomeDe(chatbots, filtros.chatbot_id)],
+    ["Atendente", nomeDe(atendentes, filtros.atendente_id)],
+    ["Departamento", nomeDe(departamentos, filtros.departamento_id)],
+    ["Origem", nomeDe(origens, filtros.origem_id, "Todas")],
+    ...(filtros.cidade ? ([["Cidade", filtros.cidade]] as [string, string][]) : []),
   ];
-
-  const nomeOrigem = (id: string | null) => (id ? (d.porOrigem.find((o) => o.id === id)?.nome ?? "—") : "Sem origem");
-  const corOrigem = (id: string | null) => d.porOrigem.find((o) => o.id === id)?.cor ?? "#c3c6d0";
 
   return (
     <article className="folha mx-auto max-w-[1000px] rounded-xl border border-line px-4 py-5 sm:px-8 sm:py-7 shadow-sm text-[13px]">
       <header className="mb-5 border-b border-line pb-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Grupo Asia · Painel de Atribuições</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">{empresaNome} · Painel de Atendimento</p>
         <h1 className="mt-1 text-xl font-semibold text-ink">{titulo || "Relatório"}</h1>
         <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
           {filtrosTexto.map(([k, v]) => (
@@ -191,117 +139,69 @@ function Documento({
         </dl>
         <p className="mt-1.5 text-[11px] text-muted">
           Gerado em {dataHora(new Date().toISOString())}
-          {autor && ` por ${autor}`}. Cada atendimento conta para o último vendedor que o recebeu; o período considera a data da última atribuição.
+          {autor && ` por ${autor}`}. Tempos em horário de atendimento; o período considera o início do atendimento.
         </p>
       </header>
 
-      <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Indicador rotulo="Atendimentos" valor={numero(total)} />
-        <Indicador rotulo="Vendedores" valor={numero(d.resumo.vendedores)} />
-        <Indicador rotulo="Repassados" valor={numero(d.resumo.reatribuidos)} sub={pct(d.resumo.reatribuidos, total)} />
-        <Indicador rotulo="Com origem" valor={numero(total - d.resumo.semOrigem)} sub={pct(total - d.resumo.semOrigem, total)} />
-        <Indicador rotulo="A revisar" valor={numero(d.resumo.aRevisar + d.resumo.pendentes)} sub={d.resumo.pendentes ? `${numero(d.resumo.pendentes)} em análise` : undefined} />
+      <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Indicador rotulo="Atendimentos" valor={numero(r.total)} sub={`${numero(r.leadsNovos)} leads novos`} />
+        <Indicador rotulo="Foram para humano" valor={numero(r.humano)} sub={porcento(r.humano, r.total)} />
+        <Indicador rotulo="Sem atendimento humano" valor={numero(r.semHumano)} sub={porcento(r.semHumano, r.humano)} />
+        <Indicador rotulo="Humano em até 30 min" valor={porcento(r.ate30, r.comTempo)} sub={`${numero(r.ate30)} de ${numero(r.comTempo)}`} />
+        <Indicador rotulo="Robô → humano" valor={duracao(r.tempoAteHumano)} sub="média" />
+        <Indicador rotulo="1ª resposta" valor={duracao(r.tempoPrimeiraResposta)} sub="média" />
+        <Indicador rotulo="Resposta do atendente" valor={duracao(r.tempoMedioResposta)} sub="média" />
+        <Indicador rotulo="Esperas > 30 min" valor={numero(r.esperas30)} sub={`${numero(r.semResposta)} sem resposta`} />
       </section>
 
-      {total === 0 ? (
+      {r.total === 0 ? (
         <p className="py-10 text-center text-muted">Nenhum atendimento com estes filtros.</p>
       ) : (
         <>
-          {secoes.has("empresas") && !filtros.empresa_id && (
-            <Bloco titulo="Atendimentos por empresa">
-              <TabelaParticipacao
-                cabecalho="Empresa"
-                total={total}
-                linhas={d.porEmpresa.map((e) => ({ chave: e.id, rotulo: e.nome, cor: e.cor, valor: e.total }))}
-              />
-            </Bloco>
+          {secoes.has("chatbots") && !filtros.chatbot_id && <TabelaGrupo titulo="Por chatbot" cabecalho="Chatbot" linhas={d.porChatbot} total={r.total} />}
+          {secoes.has("atendentes") && <TabelaAtendentesDoc linhas={d.porAtendente} tr={d.transferencias} />}
+          {secoes.has("departamentos") && <TabelaGrupo titulo="Por departamento" cabecalho="Departamento" linhas={d.porDepartamento} total={r.total} />}
+          {secoes.has("origens") && <TabelaGrupo titulo="Por origem" cabecalho="Origem" linhas={d.porOrigem} total={r.total} />}
+          {secoes.has("cidades") && <TabelaGrupo titulo="Por cidade" cabecalho="Cidade" linhas={d.porCidade} total={r.total} />}
+          {secoes.has("canais") && (
+            <>
+              <TabelaGrupo titulo="Por canal de entrada" cabecalho="Canal" linhas={d.porCanal} total={r.total} />
+              <TabelaGrupo titulo="Anúncios por plataforma" cabecalho="Plataforma" linhas={d.porAnuncio} total={r.total} />
+            </>
           )}
-
-          {secoes.has("origens") && (
-            <Bloco titulo="Atendimentos por origem">
-              <TabelaParticipacao
-                cabecalho="Origem"
-                total={total}
-                linhas={d.porOrigem.map((o) => ({ chave: o.id ?? "nenhuma", rotulo: o.nome ?? "Sem origem identificada", cor: o.cor ?? "#c3c6d0", valor: o.total }))}
-              />
-            </Bloco>
-          )}
-
-          {secoes.has("vendedores") && (
-            <Bloco titulo="Atendimentos por vendedor">
-              <table>
-                <thead>
-                  <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
-                    <Th>Vendedor</Th>
-                    {!filtros.empresa_id && <Th>Empresa</Th>}
-                    <Th direita>Atendimentos</Th>
-                    <Th direita>% do total</Th>
-                    <Th direita>Repassados</Th>
-                    <Th>Principal origem</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.porVendedor.map((v) => {
-                    const principal = d.vendedorOrigem
-                      .filter((x) => x.vendedorId === v.id && x.origemId)
-                      .sort((a, b) => b.total - a.total)[0];
-                    return (
-                      <tr key={v.id} className="border-b border-line/70">
-                        <Td className="font-medium text-ink">{v.nome}</Td>
-                        {!filtros.empresa_id && (
-                          <Td>
-                            <span className="inline-flex items-center gap-1.5">
-                              <Ponto cor={v.empresaCor} /> {v.empresaNome}
-                            </span>
-                          </Td>
-                        )}
-                        <Td direita>{numero(v.total)}</Td>
-                        <Td direita>{pct(v.total, total)}</Td>
-                        <Td direita>{numero(v.reatribuidos)}</Td>
-                        <Td>{principal ? `${nomeOrigem(principal.origemId)} (${numero(principal.total)})` : "—"}</Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Bloco>
-          )}
-
-          {secoes.has("cruzamento") && <Cruzamento d={d} nomeOrigem={nomeOrigem} corOrigem={corOrigem} />}
-
           {secoes.has("lista") && (
             <Bloco titulo="Lista de atendimentos" quebraAntes>
-              {listaCarregando || !lista ? (
+              {!lista ? (
                 <p className="text-muted">Carregando a lista…</p>
               ) : (
                 <>
                   {lista.total > lista.itens.length && (
                     <p className="mb-2 text-xs text-muted">
-                      Mostrando os {numero(lista.itens.length)} mais recentes de {numero(lista.total)}. A planilha traz o mesmo limite; filtre um período menor para ver todos.
+                      Mostrando os {numero(lista.itens.length)} mais recentes de {numero(lista.total)}. Filtre um período menor para ver todos.
                     </p>
                   )}
                   <table className="text-[12px]">
                     <thead>
                       <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
-                        <Th>Data</Th>
+                        <Th>Início</Th>
                         <Th>Cliente</Th>
-                        <Th>Telefone</Th>
-                        {!filtros.empresa_id && <Th>Empresa</Th>}
-                        <Th>Vendedor</Th>
+                        <Th>Atendente</Th>
                         <Th>Origem</Th>
-                        <Th direita>Atrib.</Th>
+                        <Th>Departamento</Th>
+                        <Th direita>Robô → humano</Th>
+                        <Th direita>Resp. média</Th>
                       </tr>
                     </thead>
                     <tbody>
                       {lista.itens.map((a) => (
                         <tr key={a.id} className="border-b border-line/70 align-top">
-                          <Td className="whitespace-nowrap tabular">{dataHora(a.ultimaAtribuicaoEm)}</Td>
-                          <Td className="text-ink">{a.clienteNome}</Td>
-                          <Td className="whitespace-nowrap tabular">{telefoneOuVazio(a.clienteTelefone)}</Td>
-                          {!filtros.empresa_id && <Td className="whitespace-nowrap">{a.empresaNome.replace("Asia ", "")}</Td>}
-                          <Td>{a.vendedorNome}</Td>
-                          <Td>{a.origemNome ?? <span className="text-muted">Sem origem</span>}</Td>
-                          <Td direita>{a.totalAtribuicoes}</Td>
+                          <Td className="whitespace-nowrap tabular">{dataHora(a.inicioEm)}</Td>
+                          <Td className="text-ink">{a.contatoNome || "Sem nome"}</Td>
+                          <Td>{a.atendenteNome ?? (a.precisouHumano ? "—" : "Só robô")}</Td>
+                          <Td>{a.origemNome ?? "—"}</Td>
+                          <Td>{a.departamentoNome ?? "—"}</Td>
+                          <Td direita>{a.semHumano ? "sem humano" : duracao(a.tempoAteHumanoS)}</Td>
+                          <Td direita>{duracao(a.tempoMedioRespostaS)}</Td>
                         </tr>
                       ))}
                     </tbody>
@@ -316,89 +216,86 @@ function Documento({
   );
 }
 
-function Cruzamento({ d, nomeOrigem, corOrigem }: { d: Dashboard; nomeOrigem: (id: string | null) => string; corOrigem: (id: string | null) => string }) {
-  const colunas = d.porOrigem.slice(0, MAX_COLUNAS_ORIGEM).map((o) => o.id);
-  const temOutras = d.porOrigem.length > MAX_COLUNAS_ORIGEM;
-  const valor = (vendedorId: string, origemId: string | null) =>
-    d.vendedorOrigem.find((x) => x.vendedorId === vendedorId && x.origemId === origemId)?.total ?? 0;
+function TabelaGrupo({ titulo, cabecalho, linhas, total }: { titulo: string; cabecalho: string; linhas: Grupo[]; total: number }) {
+  if (!linhas.length) return null;
+  const maior = Math.max(...linhas.map((l) => l.total), 1);
   return (
-    <Bloco titulo="Vendedor × origem" sub="Quantos atendimentos de cada vendedor vieram de cada origem.">
-      <table className="text-[12px]">
+    <Bloco titulo={titulo}>
+      <table>
         <thead>
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
-            <Th>Vendedor</Th>
-            {colunas.map((id) => (
-              <Th key={id ?? "nenhuma"} direita>
-                <span className="inline-flex items-center justify-end gap-1.5 normal-case tracking-normal">
-                  <Ponto cor={corOrigem(id)} />
-                  {nomeOrigem(id)}
-                </span>
-              </Th>
-            ))}
-            {temOutras && <Th direita>Outras</Th>}
-            <Th direita>Total</Th>
+            <Th>{cabecalho}</Th>
+            <Th direita>Atendimentos</Th>
+            <Th direita>%</Th>
+            <Th direita>Até 30 min</Th>
+            <Th direita>Robô → humano</Th>
+            <Th className="w-[28%]">
+              <span className="sr-only">Gráfico</span>
+            </Th>
           </tr>
         </thead>
         <tbody>
-          {d.porVendedor.map((v) => {
-            const outras = v.total - colunas.reduce((s, id) => s + valor(v.id, id), 0);
-            return (
-              <tr key={v.id} className="border-b border-line/70">
-                <Td className="font-medium text-ink">{v.nome}</Td>
-                {colunas.map((id) => {
-                  const n = valor(v.id, id);
-                  return (
-                    <Td key={id ?? "nenhuma"} direita className={n ? "text-ink" : "text-muted/60"}>
-                      {n ? numero(n) : "–"}
-                    </Td>
-                  );
-                })}
-                {temOutras && <Td direita>{outras ? numero(outras) : "–"}</Td>}
-                <Td direita className="font-medium text-ink">
-                  {numero(v.total)}
-                </Td>
-              </tr>
-            );
-          })}
+          {linhas.map((l) => (
+            <tr key={l.chave ?? l.rotulo} className="border-b border-line/70">
+              <Td className="text-ink">
+                <span className="inline-flex items-center gap-1.5">
+                  {l.cor && <Ponto cor={l.cor} />} {l.rotulo}
+                </span>
+              </Td>
+              <Td direita>{numero(l.total)}</Td>
+              <Td direita>{porcento(l.total, total)}</Td>
+              <Td direita>{porcento(l.ate30, l.comTempo)}</Td>
+              <Td direita>{duracao(l.tempoAteHumano)}</Td>
+              <Td>
+                <div className="h-2.5 rounded-sm bg-surface-2">
+                  <div className="h-full rounded-sm" style={{ width: `${(l.total / maior) * 100}%`, background: l.cor ?? "var(--accent)" }} />
+                </div>
+              </Td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </Bloco>
   );
 }
 
-function TabelaParticipacao({ cabecalho, linhas, total }: { cabecalho: string; total: number; linhas: { chave: string; rotulo: string; cor: string; valor: number }[] }) {
-  const maior = Math.max(...linhas.map((l) => l.valor), 1);
+function TabelaAtendentesDoc({ linhas, tr }: { linhas: Grupo[]; tr: Painel["transferencias"] }) {
+  if (!linhas.length) return null;
+  const t = new Map(tr.map((x) => [x.chave, x]));
   return (
-    <table>
-      <thead>
-        <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
-          <Th>{cabecalho}</Th>
-          <Th direita>Atendimentos</Th>
-          <Th direita>%</Th>
-          <Th className="w-[38%]">
-            <span className="sr-only">Gráfico</span>
-          </Th>
-        </tr>
-      </thead>
-      <tbody>
-        {linhas.map((l) => (
-          <tr key={l.chave} className="border-b border-line/70">
-            <Td className="text-ink">
-              <span className="inline-flex items-center gap-1.5">
-                <Ponto cor={l.cor} /> {l.rotulo}
-              </span>
-            </Td>
-            <Td direita>{numero(l.valor)}</Td>
-            <Td direita>{pct(l.valor, total)}</Td>
-            <Td>
-              <div className="h-2.5 rounded-sm bg-surface-2">
-                <div className="h-full rounded-sm" style={{ width: `${(l.valor / maior) * 100}%`, background: l.cor }} />
-              </div>
-            </Td>
+    <Bloco titulo="Atendentes e tempos" sub="Robô → humano: da transferência à 1ª resposta. Resposta média: entre a mensagem do cliente e a resposta do atendente.">
+      <table className="text-[12px]">
+        <thead>
+          <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
+            <Th>Atendente</Th>
+            <Th direita>Atend.</Th>
+            <Th direita>Robô → humano</Th>
+            <Th direita>Resp. média</Th>
+            <Th direita>Até 30 min</Th>
+            <Th direita>Esperas &gt; 30</Th>
+            <Th direita>Transf. feitas / recebidas</Th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {linhas.map((a) => (
+            <tr key={a.chave ?? "sem"} className="border-b border-line/70">
+              <Td className="font-medium text-ink">
+                {a.rotulo}
+                {a.timeNome && <span className="ml-1 font-normal text-muted">({a.timeNome})</span>}
+              </Td>
+              <Td direita>{numero(a.total)}</Td>
+              <Td direita>{duracao(a.tempoAteHumano)}</Td>
+              <Td direita>{duracao(a.tempoMedioResposta)}</Td>
+              <Td direita>{porcento(a.ate30, a.comTempo)}</Td>
+              <Td direita>{numero(a.esperas30)}</Td>
+              <Td direita>
+                {numero(a.chave ? (t.get(a.chave)?.feitas ?? 0) : 0)} / {numero(a.chave ? (t.get(a.chave)?.recebidas ?? 0) : 0)}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Bloco>
   );
 }
 
@@ -429,56 +326,71 @@ const Td = ({ children, direita, className }: { children?: ReactNode; direita?: 
   <td className={cx("py-1.5 pr-3 text-ink-2", direita && "text-right tabular", className)}>{children}</td>
 );
 
-const telefoneOuVazio = (t: string) => (t.startsWith("id:") ? "—" : telefone(t));
-
-/* ------------------------------------------------------------------ */
-/* Planilha: CSV com ";" e BOM, que o Excel em português abre direto   */
-/* ------------------------------------------------------------------ */
+/* Planilha: CSV com ";" e BOM, que o Excel em português abre direto */
+const fmtPlanilha = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const dataHoraPlanilha = (iso: string) => fmtPlanilha.format(new Date(iso)).replace(",", "");
+const minutos = (s: number | null) => (s === null ? "" : String(Math.round(s / 60)));
 
 function baixarCsv(nome: string, d: ListaRelatorio) {
   const cab = [
-    "Última atribuição",
-    "Primeira atribuição",
+    "Início",
+    "Protocolo",
+    "Chatbot",
     "Cliente",
     "Telefone",
-    "Empresa",
-    "Vendedor",
+    "Lead novo",
+    "Atendente",
     "Origem",
-    "Etiquetas (IA)",
-    "Etiquetas da plataforma",
-    "Atribuições",
-    "Situação",
+    "Departamento",
+    "Cidade",
+    "Canal",
+    "Fonte",
+    "Interesse",
+    "Etiquetas",
+    "Foi para humano",
+    "Sem humano",
+    "Robô→humano (min)",
+    "Resposta média (min)",
+    "Esperas >30 min",
+    "Transferências",
+    "Resumo",
   ];
-  const celula = (v: string | number) => {
-    const s = String(v);
+  const celula = (v: string | number | boolean | null | undefined) => {
+    const s = v === true ? "Sim" : v === false ? "Não" : String(v ?? "");
     return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const linhas = d.itens.map((a) =>
     [
-      dataHoraPlanilha(a.ultimaAtribuicaoEm),
-      dataHoraPlanilha(a.primeiraAtribuicaoEm),
-      a.clienteNome,
-      telefoneOuVazio(a.clienteTelefone),
-      a.empresaNome,
-      a.vendedorNome,
-      a.origemNome ?? "Sem origem",
+      dataHoraPlanilha(a.inicioEm),
+      a.protocolo,
+      a.chatbotNome,
+      a.contatoNome,
+      a.contatoTelefone ? telefone(a.contatoTelefone) : "",
+      a.leadNovo,
+      a.atendenteNome,
+      a.origemNome,
+      a.departamentoNome,
+      a.cidade,
+      a.canal,
+      a.fonte,
+      a.interesse,
       a.etiquetas.join(", "),
-      a.etiquetasPlataforma.join(", "),
-      a.totalAtribuicoes,
-      rotuloStatus(a.status),
+      a.precisouHumano,
+      a.semHumano,
+      minutos(a.tempoAteHumanoS),
+      minutos(a.tempoMedioRespostaS),
+      a.esperasAcima30,
+      a.transferencias,
+      a.resumo,
     ]
       .map(celula)
       .join(";"),
   );
   const blob = new Blob(["﻿" + [cab.join(";"), ...linhas].join("\r\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = nome;
-  a.click();
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = nome;
+  link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-/** "12/11/2026 08:30": formato que o Excel reconhece como data */
-const fmtPlanilha = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-const dataHoraPlanilha = (iso: string) => fmtPlanilha.format(new Date(iso)).replace(",", "");

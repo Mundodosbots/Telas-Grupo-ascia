@@ -1,30 +1,34 @@
 import type { ReactNode } from "react";
-import { useEmpresas, useEtiquetas, useFiltros, useOrigens, useVendedores, PERIODOS } from "../hooks";
+import { useAtendentes, useChatbots, useDepartamentos, useEtiquetas, useFiltros, useOrigens, useTimes, PERIODOS } from "../hooks";
 import { Campo, cx, Selecao } from "./ui";
 
-/** Barra de filtros única, acima dos gráficos/listas. Tudo fica na URL. */
-export function BarraFiltros({ extras = [] }: { extras?: ("vendedor" | "origem" | "etiqueta" | "busca")[] }) {
+type Extra = "atendente" | "time" | "departamento" | "origem" | "etiqueta" | "canal" | "cidade" | "busca" | "humano";
+
+/** Barra de filtros única. Tudo fica na URL (dá para mandar o link com o filtro). */
+export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
   const { filtros, definir } = useFiltros();
-  const empresas = useEmpresas();
-  const vendedores = useVendedores();
+  const chatbots = useChatbots();
+  const atendentes = useAtendentes();
+  const times = useTimes();
+  const departamentos = useDepartamentos();
   const origens = useOrigens();
   const etiquetas = useEtiquetas();
-
-  const vendedoresVisiveis = (vendedores.data ?? []).filter((v) => !filtros.empresa_id || v.empresaId === filtros.empresa_id);
+  const tem = (e: Extra) => extras.includes(e);
 
   return (
-    <div className="mb-5 grid gap-3">
-      {/* Empresa: botões segmentados — é o filtro mais usado */}
-      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Empresa">
-        <BotaoEmpresa ativo={!filtros.empresa_id} onClick={() => definir({ empresa: undefined, vendedor: undefined })}>
-          Todas as empresas
-        </BotaoEmpresa>
-        {(empresas.data ?? []).map((e) => (
-          <BotaoEmpresa key={e.id} ativo={filtros.empresa_id === e.id} cor={e.cor} onClick={() => definir({ empresa: e.id, vendedor: undefined })}>
-            {e.nome}
-          </BotaoEmpresa>
-        ))}
-      </div>
+    <div className="mb-5 grid gap-3 print:hidden">
+      {(chatbots.data?.length ?? 0) > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Chatbot">
+          <Pilula ativo={!filtros.chatbot_id} onClick={() => definir({ chatbot: undefined })}>
+            Todos os chatbots
+          </Pilula>
+          {chatbots.data!.map((c) => (
+            <Pilula key={c.id} ativo={filtros.chatbot_id === c.id} cor={c.cor} onClick={() => definir({ chatbot: c.id })}>
+              {c.nome}
+            </Pilula>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-end gap-3">
         <Selecao rotulo="Período" value={filtros.periodo} onChange={(e) => definir({ periodo: e.target.value })} className="w-44">
@@ -40,21 +44,41 @@ export function BarraFiltros({ extras = [] }: { extras?: ("vendedor" | "origem" 
             <Campo rotulo="Até" type="date" value={filtros.fim ?? ""} onChange={(e) => definir({ fim: e.target.value })} className="w-40" />
           </>
         )}
-        {extras.includes("vendedor") && (
-          <Selecao rotulo="Vendedor" value={filtros.vendedor_id ?? ""} onChange={(e) => definir({ vendedor: e.target.value })} className="w-52">
+        {tem("atendente") && (
+          <Selecao rotulo="Atendente" value={filtros.atendente_id ?? ""} onChange={(e) => definir({ atendente: e.target.value })} className="w-52">
             <option value="">Todos</option>
-            {vendedoresVisiveis.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.nome}
-                {!filtros.empresa_id ? ` · ${v.empresaNome.replace("Asia ", "")}` : ""}
+            {(atendentes.data ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.nome}
               </option>
             ))}
           </Selecao>
         )}
-        {extras.includes("origem") && (
+        {tem("time") && (times.data?.length ?? 0) > 0 && (
+          <Selecao rotulo="Time" value={filtros.time_id ?? ""} onChange={(e) => definir({ time: e.target.value })} className="w-44">
+            <option value="">Todos</option>
+            {times.data!.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.nome}
+              </option>
+            ))}
+          </Selecao>
+        )}
+        {tem("departamento") && (
+          <Selecao rotulo="Departamento" value={filtros.departamento_id ?? ""} onChange={(e) => definir({ departamento: e.target.value })} className="w-48">
+            <option value="">Todos</option>
+            <option value="nenhum">Sem departamento</option>
+            {(departamentos.data ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.nome}
+              </option>
+            ))}
+          </Selecao>
+        )}
+        {tem("origem") && (
           <Selecao rotulo="Origem" value={filtros.origem_id ?? ""} onChange={(e) => definir({ origem: e.target.value })} className="w-52">
             <option value="">Todas</option>
-            <option value="nenhuma">Sem origem identificada</option>
+            <option value="nenhuma">Sem origem</option>
             {(origens.data ?? []).map((o) => (
               <option key={o.id} value={o.id}>
                 {o.nome}
@@ -62,7 +86,7 @@ export function BarraFiltros({ extras = [] }: { extras?: ("vendedor" | "origem" 
             ))}
           </Selecao>
         )}
-        {extras.includes("etiqueta") && (
+        {tem("etiqueta") && (
           <Selecao rotulo="Etiqueta" value={filtros.etiqueta_id ?? ""} onChange={(e) => definir({ etiqueta: e.target.value })} className="w-44">
             <option value="">Todas</option>
             {(etiquetas.data ?? []).map((o) => (
@@ -72,24 +96,40 @@ export function BarraFiltros({ extras = [] }: { extras?: ("vendedor" | "origem" 
             ))}
           </Selecao>
         )}
-        {extras.includes("busca") && (
+        {tem("cidade") && (
           <Campo
-            // key: recria o campo quando a busca muda pelo endereço (voltar, limpar, link)
-            key={filtros.busca ?? ""}
+            key={`cidade-${filtros.cidade ?? ""}`}
+            rotulo="Cidade"
+            placeholder="Ex.: Sinop"
+            defaultValue={filtros.cidade ?? ""}
+            onKeyDown={(e) => e.key === "Enter" && definir({ cidade: (e.target as HTMLInputElement).value.trim() })}
+            onBlur={(e) => e.target.value.trim() !== (filtros.cidade ?? "") && definir({ cidade: e.target.value.trim() })}
+            className="w-36"
+          />
+        )}
+        {tem("busca") && (
+          <Campo
+            key={`busca-${filtros.busca ?? ""}`}
             rotulo="Buscar"
-            placeholder="Nome, telefone ou texto do resumo"
+            placeholder="Nome, telefone, protocolo ou resumo"
             defaultValue={filtros.busca ?? ""}
             onKeyDown={(e) => e.key === "Enter" && definir({ busca: (e.target as HTMLInputElement).value })}
             onBlur={(e) => e.target.value !== (filtros.busca ?? "") && definir({ busca: e.target.value })}
             className="w-64"
           />
         )}
+        {tem("humano") && (
+          <label className="flex h-9 items-center gap-2 text-sm text-ink-2 cursor-pointer">
+            <input type="checkbox" className="size-4" checked={filtros.humano === "1"} onChange={(e) => definir({ humano: e.target.checked ? "1" : undefined })} />
+            Só os que foram para humano
+          </label>
+        )}
       </div>
     </div>
   );
 }
 
-function BotaoEmpresa({ ativo, cor, onClick, children }: { ativo: boolean; cor?: string; onClick: () => void; children: ReactNode }) {
+function Pilula({ ativo, cor, onClick, children }: { ativo: boolean; cor?: string; onClick: () => void; children: ReactNode }) {
   return (
     <button
       onClick={onClick}

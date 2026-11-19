@@ -1,153 +1,97 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, sqlClient } from "./client";
-import { dicionarioEtiquetas, empresas, etiquetas, origens, regrasOrigem, usuarios } from "./schema";
 import { rodarMigracoes } from "./migrate";
+import { departamentos, etiquetas, origens, regrasOrigem, usuarios } from "./schema";
 
-const EMPRESAS = [
-  { nome: "Asia Fiat", slug: "asia-fiat", cor: "#2a78d6" },
-  { nome: "Asia Multimarcas", slug: "asia-multimarcas", cor: "#eb6834" },
-  { nome: "Asia Leap Motors", slug: "asia-leap-motors", cor: "#1baf7a" },
-];
+type Item = { nome: string; descricao: string; cor: string };
 
-const ORIGENS: { nome: string; descricao: string; cor: string; empresa?: string }[] = [
-  {
-    nome: "RPA Grow",
-    descricao: "Contato atribuído automaticamente pela ferramenta RPA do Grow (mensagens como 'contato atribuído pelo RPA Grow').",
-    cor: "#6250d6",
-  },
-  {
-    nome: "Anúncio Meta (Instagram/Facebook)",
-    descricao: "Cliente veio de anúncio pago no Instagram ou Facebook, clique em anúncio, formulário de lead do Meta.",
-    cor: "#e87ba4",
-  },
-  {
-    nome: "Google",
-    descricao: "Cliente veio de pesquisa ou anúncio no Google, Google Maps ou Perfil da Empresa no Google.",
-    cor: "#2a78d6",
-  },
+/** Origens iniciais de toda empresa nova (a empresa edita depois) */
+export const ORIGENS_PADRAO: Item[] = [
+  { nome: "Anúncio Instagram", descricao: "Clicou num anúncio pago do Instagram (ADS Plataforma = Instagram, link do post do Instagram).", cor: "#e87ba4" },
+  { nome: "Anúncio Facebook", descricao: "Clicou num anúncio pago do Facebook (ADS Plataforma = Facebook, link fb.me).", cor: "#2a78d6" },
   {
     nome: "Anúncio (plataforma não identificada)",
-    descricao:
-      "Cliente chegou por causa de um anúncio (ex.: primeira mensagem 'quero mais detalhes do anúncio...'), mas não dá para saber se foi Instagram, Facebook, Google ou portal.",
+    descricao: "Veio de anúncio (fonte Ads, 'vi o anúncio', clique em anúncio) mas não dá para saber se foi Instagram ou Facebook.",
     cor: "#eda100",
   },
+  { nome: "RPA Grow", descricao: "Contato enviado pela integração do Grow (etiqueta Grow, mensagens de API do Grow).", cor: "#6250d6" },
+  { nome: "Google", descricao: "Pesquisa ou anúncio no Google, Google Maps, Perfil da Empresa no Google.", cor: "#1baf7a" },
+  { nome: "Portal de veículos", descricao: "Webmotors, OLX, iCarros, Mobiauto e outros classificados.", cor: "#b3741b" },
+  { nome: "Site da empresa", descricao: "Botão de WhatsApp ou formulário do site da empresa.", cor: "#0f8a8a" },
+  { nome: "Indicação", descricao: "Indicado por amigo, parente ou outro cliente.", cor: "#008300" },
   {
     nome: "Campanha de marketing",
-    descricao: "Cliente respondeu a uma campanha de marketing geral da loja: disparo em massa, e-mail marketing, promoção, feirão. Se a campanha ou evento for de uma marca que tem origem própria (ex.: Leap Motors), use a origem da marca.",
+    descricao: "Respondeu a um disparo em massa, e-mail, promoção, feirão ou evento da loja. Não use para anúncio pago clicado.",
     cor: "#eb6834",
   },
   {
-    nome: "Portal de veículos",
-    descricao: "Cliente veio de portal de classificados como Webmotors, OLX, iCarros, Mobiauto.",
-    cor: "#eda100",
-  },
-  {
-    nome: "Site da empresa",
-    descricao: "Cliente chegou pelo site institucional ou botão de WhatsApp do site.",
-    cor: "#1baf7a",
-  },
-  {
-    nome: "Indicação",
-    descricao: "Cliente foi indicado por outra pessoa, amigo, parente ou outro cliente.",
-    cor: "#008300",
-  },
-  {
     nome: "Contato direto / orgânico",
-    descricao: "Cliente chamou direto no WhatsApp sem mencionar anúncio, campanha ou indicação; já conhecia a loja ou é cliente antigo.",
+    descricao: "Chamou direto, já conhecia a loja ou é cliente antigo, sem nenhuma pista de anúncio, campanha ou indicação.",
     cor: "#898781",
   },
-  {
-    nome: "Campanha Leap Motors",
-    descricao: "Cliente veio de propaganda, campanha ou evento da Leap Motors / Leapmotor: lançamentos (C10, T03 etc.), eventos em shopping, ações de test drive da marca, mídia da marca.",
-    cor: "#e34948",
-    empresa: "asia-leap-motors",
-  },
 ];
 
-const ETIQUETAS = [
-  { nome: "Carro 0 km", descricao: "Interesse em veículo novo.", cor: "#2a78d6" },
-  { nome: "Seminovo", descricao: "Interesse em veículo usado/seminovo.", cor: "#eda100" },
-  { nome: "Test drive", descricao: "Pediu ou agendou test drive.", cor: "#1baf7a" },
-  { nome: "Financiamento", descricao: "Perguntou sobre financiamento, parcelas, entrada, crédito.", cor: "#6250d6" },
+export const DEPARTAMENTOS_PADRAO: Item[] = [
+  { nome: "Vendas (0 km)", descricao: "Compra de veículo novo, cotação, test drive, condições de compra.", cor: "#2a78d6" },
+  { nome: "Seminovos", descricao: "Compra ou venda de veículo usado/seminovo, avaliação de troca.", cor: "#eda100" },
+  { nome: "Pós-venda / Oficina", descricao: "Revisão, manutenção, agendamento de serviço, garantia, recall, problema no veículo.", cor: "#898781" },
+  { nome: "Peças", descricao: "Compra ou consulta de peças, preço de peça, pedido de peça.", cor: "#6250d6" },
+  { nome: "Acessórios", descricao: "Acessórios para o veículo (tapete, película, engate etc.).", cor: "#1baf7a" },
+  { nome: "Venda direta / Frotas", descricao: "Compra por CNPJ, frotista, PcD, taxista, produtor rural, locadora.", cor: "#e87ba4" },
+  { nome: "Financeiro", descricao: "Boleto, cobrança, nota fiscal, documentação, financiamento já contratado.", cor: "#e34948" },
+  { nome: "Outros", descricao: "Assunto que não se encaixa nos demais (currículo, reclamação geral, engano).", cor: "#b4b8c5" },
+];
+
+export const ETIQUETAS_PADRAO: Item[] = [
+  { nome: "Lead quente", descricao: "Intenção clara de compra no curto prazo.", cor: "#e34948" },
+  { nome: "Financiamento", descricao: "Perguntou sobre financiamento, parcelas, entrada.", cor: "#6250d6" },
   { nome: "Troca / avaliação", descricao: "Quer dar um carro na troca ou avaliar o usado.", cor: "#eb6834" },
-  { nome: "Pós-venda / oficina", descricao: "Assunto de revisão, peças, oficina, garantia.", cor: "#898781" },
-  { nome: "Venda direta / PJ", descricao: "Compra por CNPJ, frotista, PcD, taxista, produtor rural.", cor: "#e87ba4" },
-  { nome: "Lead quente", descricao: "Demonstrou intenção clara de compra no curto prazo.", cor: "#e34948" },
+  { nome: "Test drive", descricao: "Pediu ou agendou test drive.", cor: "#1baf7a" },
+  { nome: "Agendamento", descricao: "Agendou visita ou serviço.", cor: "#2a78d6" },
+  { nome: "Reclamação", descricao: "Reclamou do atendimento, do produto ou do serviço.", cor: "#c22f2f" },
+  { nome: "Sem resposta do cliente", descricao: "O cliente parou de responder.", cor: "#898781" },
 ];
 
-/** IDs de etiqueta da plataforma que valem para todas as contas */
-const ETIQUETAS_CONHECIDAS = [{ idExterno: "706325", nome: "Grow" }];
+/** Cria os cadastros iniciais de uma empresa nova (origens, departamentos, etiquetas e regras) */
+export async function semearEmpresa(empresaId: string) {
+  const criadas = await db
+    .insert(origens)
+    .values(ORIGENS_PADRAO.map((o) => ({ ...o, empresaId })))
+    .returning({ id: origens.id, nome: origens.nome });
+  await db.insert(departamentos).values(DEPARTAMENTOS_PADRAO.map((d) => ({ ...d, empresaId })));
+  await db.insert(etiquetas).values(ETIQUETAS_PADRAO.map((e) => ({ ...e, empresaId })));
+  const id = (nome: string) => criadas.find((o) => o.nome === nome)!.id;
+  // Ordem: etiqueta Grow → plataforma do anúncio → clique em anúncio no texto → fonte Ads
+  await db.insert(regrasOrigem).values([
+    { empresaId, campo: "etiqueta", comparacao: "igual", valor: "Grow", origemId: id("RPA Grow"), prioridade: 10 },
+    { empresaId, campo: "anuncio", comparacao: "igual", valor: "Instagram", origemId: id("Anúncio Instagram"), prioridade: 20 },
+    { empresaId, campo: "anuncio", comparacao: "igual", valor: "Facebook", origemId: id("Anúncio Facebook"), prioridade: 30 },
+    { empresaId, campo: "texto", comparacao: "contem", valor: "ADS_CLICKED", origemId: id("Anúncio (plataforma não identificada)"), prioridade: 40 },
+    { empresaId, campo: "fonte", comparacao: "igual", valor: "Ads", origemId: id("Anúncio (plataforma não identificada)"), prioridade: 50 },
+  ]);
+}
 
+/** Migrações + superadmin inicial (MASTER_EMAIL / MASTER_SENHA). Idempotente. */
 export async function semear() {
   await rodarMigracoes();
-
-  const slugParaId = new Map<string, string>();
-  for (const e of EMPRESAS) {
-    const [existente] = await db.select().from(empresas).where(eq(empresas.slug, e.slug));
-    if (existente) {
-      slugParaId.set(e.slug, existente.id);
-      continue;
-    }
-    const [criada] = await db.insert(empresas).values(e).returning();
-    slugParaId.set(e.slug, criada!.id);
-    console.log(`Empresa criada: ${e.nome}`);
-  }
-
-  for (const o of ORIGENS) {
-    const empresaId = o.empresa ? slugParaId.get(o.empresa)! : null;
-    const [existe] = await db
-      .select({ id: origens.id })
-      .from(origens)
-      .where(and(eq(origens.nome, o.nome), empresaId ? eq(origens.empresaId, empresaId) : isNull(origens.empresaId)));
-    if (!existe) await db.insert(origens).values({ nome: o.nome, descricao: o.descricao, cor: o.cor, empresaId });
-  }
-
-  for (const et of ETIQUETAS) {
-    const [existe] = await db.select({ id: etiquetas.id }).from(etiquetas).where(eq(etiquetas.nome, et.nome));
-    if (!existe) await db.insert(etiquetas).values(et);
-  }
-
-  // Etiqueta "Grow" da plataforma (mesmo ID nas 3 contas): garante que a regra do Grow funcione
-  // mesmo antes de alguém importar o dicionário de etiquetas da empresa.
-  for (const id of slugParaId.values()) {
-    await db.insert(dicionarioEtiquetas).values(ETIQUETAS_CONHECIDAS.map((e) => ({ empresaId: id, ...e }))).onConflictDoNothing();
-  }
-
-  // Regras iniciais (só quando ainda não há nenhuma):
-  //   1º etiqueta "Grow" da plataforma → RPA Grow
-  //   2º fonte do contato "ads" → Anúncio Meta
-  const [{ regras }] = (await db.select({ regras: sql<number>`count(*)::int` }).from(regrasOrigem)) as [{ regras: number }];
-  if (regras === 0) {
-    const origemGlobal = async (nome: string) =>
-      (await db.select({ id: origens.id }).from(origens).where(and(eq(origens.nome, nome), isNull(origens.empresaId))))[0]?.id;
-    const grow = await origemGlobal("RPA Grow");
-    const meta = await origemGlobal("Anúncio Meta (Instagram/Facebook)");
-    if (grow) await db.insert(regrasOrigem).values({ campo: "etiqueta", comparacao: "igual", valor: "Grow", origemId: grow, prioridade: 10 });
-    // Clique em anúncio registrado nos metadados = tráfego pago da Meta (mesma regra da migração 0003)
-    if (meta) await db.insert(regrasOrigem).values({ campo: "resumo", comparacao: "contem", valor: "ADS_CLICKED", origemId: meta, prioridade: 15 });
-    if (meta) await db.insert(regrasOrigem).values({ campo: "fonte", comparacao: "igual", valor: "ads", origemId: meta, prioridade: 20 });
-  }
-
   const [{ total }] = (await db
     .select({ total: sql<number>`count(*)::int` })
     .from(usuarios)
-    .where(eq(usuarios.papel, "master"))) as [{ total: number }];
-
-  if (total === 0) {
-    const email = process.env.MASTER_EMAIL;
-    const senha = process.env.MASTER_SENHA;
-    if (!email || !senha) {
-      console.warn("Nenhum master criado: defina MASTER_EMAIL e MASTER_SENHA e rode o seed de novo.");
-    } else {
-      await db.insert(usuarios).values({
-        nome: process.env.MASTER_NOME || "Administrador",
-        email: email.toLowerCase().trim(),
-        senhaHash: await Bun.password.hash(senha),
-        papel: "master",
-      });
-      console.log(`Usuário master criado: ${email}`);
-    }
+    .where(eq(usuarios.papel, "superadmin"))) as [{ total: number }];
+  if (total > 0) return;
+  const email = process.env.MASTER_EMAIL;
+  const senha = process.env.MASTER_SENHA;
+  if (!email || !senha) {
+    console.warn("Nenhum superadmin criado: defina MASTER_EMAIL e MASTER_SENHA.");
+    return;
   }
+  await db.insert(usuarios).values({
+    nome: process.env.MASTER_NOME || "Administrador",
+    email: email.toLowerCase().trim(),
+    senhaHash: await Bun.password.hash(senha),
+    papel: "superadmin",
+  });
+  console.log(`Superadmin criado: ${email}`);
 }
 
 if (import.meta.main) {

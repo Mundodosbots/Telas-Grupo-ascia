@@ -31,8 +31,8 @@ export function PaginaLogin() {
             <BarChart3 className="size-5" />
           </span>
           <div>
-            <h1 className="text-lg font-semibold">Painel de Atribuições</h1>
-            <p className="text-xs text-muted">Grupo Asia · acesso restrito</p>
+            <h1 className="text-lg font-semibold">Painel de Atendimento</h1>
+            <p className="text-xs text-muted">Mundo dos Bots · acesso restrito</p>
           </div>
         </div>
         {erro && <Alerta>{erro}</Alerta>}
@@ -41,7 +41,7 @@ export function PaginaLogin() {
         <Botao type="submit" variante="primario" carregando={enviando} className="h-10">
           Entrar
         </Botao>
-        <p className="text-center text-xs text-muted">Sem acesso? Peça ao administrador da Mundo dos Bots.</p>
+        <p className="text-center text-xs text-muted">Sem acesso? Peça ao administrador da sua empresa.</p>
       </form>
     </div>
   );

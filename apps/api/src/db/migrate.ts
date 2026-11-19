@@ -31,6 +31,14 @@ async function garantirBanco() {
 
 export async function rodarMigracoes() {
   await garantirBanco();
+  // A versão SaaS começa num banco novo. Se este for o banco da versão antiga, não mexe em nada.
+  const [antigo] = await sqlClient`select to_regclass('public.vendedores') as t`;
+  if (antigo?.t) {
+    throw new Error(
+      "Este banco é da versão antiga do painel (tem a tabela 'vendedores'). A versão SaaS usa um banco novo: " +
+        "troque POSTGRES_DB (ou DATABASE_URL) na stack para outro nome, ex.: painel_saas. O banco antigo fica intacto.",
+    );
+  }
   await migrate(db, { migrationsFolder: join(import.meta.dir, "../../drizzle") });
 }
 

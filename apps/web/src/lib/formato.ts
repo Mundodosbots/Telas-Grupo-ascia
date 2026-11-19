@@ -69,3 +69,17 @@ export function trechoParaRevisao(resumo: string): { titulo: string | null; text
 
 /** Paleta categórica validada (claro). Ordem fixa: nunca reciclar. */
 export const PALETA = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948", "#898781"];
+
+/** Segundos → "45 s", "12 min", "1 h 20 min", "2 d 3 h" */
+export function duracao(s: number | null | undefined): string {
+  if (s === null || s === undefined) return "—";
+  if (s < 60) return `${Math.round(s)} s`;
+  const min = Math.round(s / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return `${h} h${min % 60 ? ` ${min % 60} min` : ""}`;
+  return `${Math.floor(h / 24)} d${h % 24 ? ` ${h % 24} h` : ""}`;
+}
+
+/** Parte de um total em %, sem casas ("—" sem total) */
+export const porcento = (parte: number, total: number) => (total ? `${Math.round((parte / total) * 100)}%` : "—");
