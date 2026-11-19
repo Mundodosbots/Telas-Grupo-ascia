@@ -79,14 +79,14 @@ services:
         - traefik.enable=1
         - traefik.docker.network=CLNet
         # Um serviço só: o app serve o painel e a API (/api) — sem strip de prefixo
-        - traefik.http.routers.ascia-screen.rule=Host(`atendly.mundodosbots.com.br`) || Host(`ascia-screen.mundodosbots.com.br`)
-        - traefik.http.routers.ascia-screen.entrypoints=websecure
-        - traefik.http.routers.ascia-screen.tls.certresolver=letsencryptresolver
-        - traefik.http.routers.ascia-screen.service=ascia-screen
-        - traefik.http.routers.ascia-screen.middlewares=ascia-screen-headers
-        - traefik.http.middlewares.ascia-screen-headers.headers.customrequestheaders.X-Forwarded-Proto=https
-        - traefik.http.services.ascia-screen.loadbalancer.server.port=3000
-        - traefik.http.services.ascia-screen.loadbalancer.passHostHeader=true
+        - traefik.http.routers.atendly.rule=Host(`atendly.mundodosbots.com.br`)
+        - traefik.http.routers.atendly.entrypoints=websecure
+        - traefik.http.routers.atendly.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.atendly.service=atendly
+        - traefik.http.routers.atendly.middlewares=atendly-headers
+        - traefik.http.middlewares.atendly-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.services.atendly.loadbalancer.server.port=3000
+        - traefik.http.services.atendly.loadbalancer.passHostHeader=true
 
 networks:
   CLNet:
