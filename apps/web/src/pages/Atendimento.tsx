@@ -213,6 +213,7 @@ export function PaginaAtendimento() {
                   </li>
                 ))}
                 {a.transferencias > 0 && <li className="text-xs text-muted">{a.transferencias} transferência(s) entre atendentes</li>}
+                {a.semHumano && <li className="text-xs font-medium text-bad">Só mandou o encerramento: o cliente não recebeu resposta de um atendente.</li>}
               </ol>
             ) : (
               <p className="text-sm text-muted">{a.historicoIncompleto ? "Não dá para saber: o trecho em que o atendente entraria não veio no envio." : a.precisouHumano ? "Foi para a fila, mas nenhum humano respondeu." : "Resolvido só pelo robô."}</p>

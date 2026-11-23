@@ -344,37 +344,66 @@ export type Tempos = {
   iniciadoPelaEmpresa: boolean;
 };
 
+/** Mensagens automáticas que não são "conversa" do robô: avisos de fila, protocolo, fora do horário, encerramento */
+const AVISO_AUTOMATICO = /fora do (nosso )?horario|horario de atendimento|protocolo/;
+
 /**
  * O que importa para medir um atendimento:
- * - fila: começa na mensagem do robô que transfere (ou na 1ª do cliente);
+ * - resposta humana: mensagem de atendente que não seja só o encerramento ("agradece o contato…").
+ *   Atendente que só encerrou não respondeu o cliente;
+ * - fila: começa na mensagem do robô que transfere. Se o robô (ex.: assistente de vendas) continua
+ *   conversando depois de uma "transferência", ela não valeu: a fila começa na próxima, depois que o robô para;
  * - ativo: o atendente falou antes do cliente (a empresa puxou a conversa, ex.: confirmar agendamento),
  *   então não existe "espera do robô até o humano";
+ * - espera: várias mensagens do cliente aguardando a mesma resposta são UMA espera, contada da primeira;
  * - pós-encerramento: o que o cliente manda depois do encerramento (resposta da pesquisa, "obrigada")
  *   não é mensagem esperando resposta, a não ser que um atendente volte a falar depois.
  */
 function analisar<M extends { em: Date; tipo: string; texto: string }>(msgs: M[]) {
+  const texto = msgs.map((m) => normalizar(m.texto));
+  const encerra = (i: number) => msgs[i]!.tipo !== "cliente" && ENCERRAMENTO.test(texto[i]!);
   const iCliente = msgs.findIndex((m) => m.tipo === "cliente");
-  const iHumano = msgs.findIndex((m) => m.tipo === "humano");
+  const iHumano = msgs.findIndex((m, i) => m.tipo === "humano" && !encerra(i));
+  // O encerramento só não vale como resposta quando é tudo o que o atendente mandou;
+  // depois que ele já conversou, o encerramento responde o "obrigada" do cliente
+  const respondeu = (i: number) => msgs[i]!.tipo === "humano" && (!encerra(i) || (iHumano >= 0 && i > iHumano));
   const primeiraCliente = iCliente >= 0 ? msgs[iCliente]! : null;
   const primeiraHumana = iHumano >= 0 ? msgs[iHumano]! : null;
   const ativo = iHumano >= 0 && (iCliente < 0 || iHumano < iCliente);
-  const transferencia =
-    msgs.find((m) => (m.tipo === "bot" || m.tipo === "api") && TRANSFERENCIA.test(normalizar(m.texto)) && (!primeiraHumana || m.em <= primeiraHumana.em)) ?? null;
+
+  // Transferências candidatas (antes da 1ª resposta humana); vale a primeira depois da qual o robô não conversa mais
+  const limite = iHumano >= 0 ? iHumano : msgs.length;
+  const automatica = (i: number) => msgs[i]!.tipo === "bot" || msgs[i]!.tipo === "api";
+  const candidatas: number[] = [];
+  for (let i = 0; i < limite; i++) if (automatica(i) && TRANSFERENCIA.test(texto[i]!)) candidatas.push(i);
+  const roboConversa = (de: number) => {
+    for (let j = de + 1; j < limite; j++) if (automatica(j) && !TRANSFERENCIA.test(texto[j]!) && !AVISO_AUTOMATICO.test(texto[j]!) && !encerra(j)) return true;
+    return false;
+  };
+  const iTransf = candidatas.find((i) => !roboConversa(i)) ?? candidatas.at(-1) ?? -1;
+  const transferencia = iTransf >= 0 ? msgs[iTransf]! : null;
   const inicioFila = transferencia?.em ?? primeiraCliente?.em ?? null;
+
   let iFim = -1;
-  msgs.forEach((m, i) => {
-    if (m.tipo !== "cliente" && ENCERRAMENTO.test(normalizar(m.texto))) iFim = i;
-  });
-  if (iFim >= 0 && msgs.slice(iFim + 1).some((m) => m.tipo === "humano")) iFim = -1; // a conversa continuou
-  /** Mensagens do cliente que abrem um bloco na fila, com a resposta humana (se veio) */
-  const blocos: { i: number; resposta: M | null }[] = [];
+  msgs.forEach((_, i) => encerra(i) && (iFim = i));
+  if (iFim >= 0 && msgs.slice(iFim + 1).some((_, k) => respondeu(iFim + 1 + k))) iFim = -1; // a conversa continuou
+
   // A fila começa na posição da transferência (mensagens do cliente no mesmo minuto, mas antes dela, não contam)
-  const iFila = transferencia ? msgs.indexOf(transferencia) : iCliente;
+  const iFila = iTransf >= 0 ? iTransf : iCliente;
+  /** Mensagens do cliente que abrem uma espera, com a resposta humana (se veio). Uma espera por resposta. */
+  const blocos: { i: number; resposta: M | null }[] = [];
+  const respostasVistas = new Set<number>();
   msgs.forEach((m, i) => {
     if (m.tipo !== "cliente" || !inicioFila || iFila < 0 || i < iFila) return;
-    if (i > 0 && msgs[i - 1]!.tipo === "cliente") return; // mesmo bloco
     if (iFim >= 0 && i > iFim) return; // depois do encerramento
-    blocos.push({ i, resposta: msgs.slice(i + 1).find((x) => x.tipo === "humano") ?? null });
+    let r = -1;
+    for (let j = i + 1; j < msgs.length; j++) if (respondeu(j)) {
+      r = j;
+      break;
+    }
+    if (respostasVistas.has(r)) return; // já está esperando essa mesma resposta (r = -1: sem resposta)
+    respostasVistas.add(r);
+    blocos.push({ i, resposta: r >= 0 ? msgs[r]! : null });
   });
   return { primeiraCliente, primeiraHumana, ativo, transferencia, inicioFila, iFim, blocos };
 }
@@ -456,7 +485,7 @@ export function marcarEsperas<M extends { em: Date; tipo: string; texto: string 
     if (!porIndice.has(i)) return r;
     const resposta = porIndice.get(i);
     if (resposta) r.esperaS = util(m.em, resposta.em);
-    else if (primeiraHumana) r.semResposta = true;
+    else if (primeiraHumana || transferencia) r.semResposta = true;
     return r;
   });
 }
