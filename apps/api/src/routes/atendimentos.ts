@@ -80,6 +80,7 @@ const colunasLista = {
   transferencias: atendimentos.transferencias,
   leadNovo: atendimentos.leadNovo,
   historicoIncompleto: atendimentos.historicoIncompleto,
+  iniciadoPelaEmpresa: atendimentos.iniciadoPelaEmpresa,
   status: atendimentos.classificacaoStatus,
 };
 
@@ -188,6 +189,56 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         conversa: marcarEsperas(conversa, a.horario, a.fuso),
         outros,
       };
+    },
+    { params: paramsId },
+  )
+  /** Linha do tempo do cliente: todos os atendimentos do mesmo contato, com as mensagens */
+  .get(
+    "/:id/historico-cliente",
+    async ({ params, empresaId, set }) => {
+      const [a] = await db
+        .select({ contatoId: atendimentos.contatoId, horario: chatbots.horario, fuso: chatbots.fuso })
+        .from(atendimentos)
+        .innerJoin(chatbots, eq(chatbots.id, atendimentos.chatbotId))
+        .where(and(eq(atendimentos.id, params.id), eq(atendimentos.empresaId, empresaId)));
+      if (!a) {
+        set.status = 404;
+        return { erro: "Atendimento não encontrado" };
+      }
+      const lista = await db
+        .select({
+          id: atendimentos.id,
+          protocolo: atendimentos.protocolo,
+          inicioEm: atendimentos.inicioEm,
+          ultimaMsgEm: atendimentos.ultimaMsgEm,
+          atendenteNome: atendentes.nome,
+          origemNome: origens.nome,
+          origemCor: origens.cor,
+          precisouHumano: atendimentos.precisouHumano,
+          semHumano: atendimentos.semHumano,
+          historicoIncompleto: atendimentos.historicoIncompleto,
+          iniciadoPelaEmpresa: atendimentos.iniciadoPelaEmpresa,
+          tempoAteHumanoS: atendimentos.tempoAteHumanoS,
+          esperasAcima30: atendimentos.esperasAcima30,
+          interesse: atendimentos.interesse,
+        })
+        .from(atendimentos)
+        .leftJoin(atendentes, eq(atendentes.id, atendimentos.atendenteId))
+        .leftJoin(origens, eq(origens.id, atendimentos.origemId))
+        .where(eq(atendimentos.contatoId, a.contatoId))
+        .orderBy(asc(atendimentos.inicioEm));
+      const msgs = await db
+        .select({ id: mensagens.id, atendimentoId: mensagens.atendimentoId, em: mensagens.enviadaEm, tipo: mensagens.remetenteTipo, remetente: mensagens.remetenteNome, texto: mensagens.texto })
+        .from(mensagens)
+        .where(eq(mensagens.contatoId, a.contatoId))
+        .orderBy(asc(mensagens.enviadaEm), asc(mensagens.seq))
+        .limit(3000);
+      // Esperas e marcos (transferência, 1ª resposta, encerramento) de cada atendimento
+      const porAtendimento = new Map<string, typeof msgs>();
+      for (const m of msgs) if (m.atendimentoId) porAtendimento.set(m.atendimentoId, [...(porAtendimento.get(m.atendimentoId) ?? []), m]);
+      const marcadas = new Map<string, ReturnType<typeof marcarEsperas<(typeof msgs)[number]>>[number]>();
+      for (const grupo of porAtendimento.values()) for (const m of marcarEsperas(grupo, a.horario, a.fuso)) marcadas.set(m.id, m);
+      return { atendimentos: lista, mensagens: msgs.map((m) => marcadas.get(m.id) ?? m) };
     },
     { params: paramsId },
   )

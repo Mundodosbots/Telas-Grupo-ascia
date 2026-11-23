@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eraser, LogIn, Plus } from "lucide-react";
+import { Eraser, LogIn, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { api, type Empresa } from "../api";
 import { useAuth } from "../auth";
@@ -14,6 +14,7 @@ export function PaginaEmpresas() {
   const lista = useQuery({ queryKey: ["empresas-saas"], queryFn: () => api<Empresa[]>("/empresas") });
   const [nova, setNova] = useState(false);
   const [limpando, setLimpando] = useState<Empresa | null>(null);
+  const [reprocessando, setReprocessando] = useState<Empresa | null>(null);
   const alternar = useMutation({
     mutationFn: (e: Empresa) => api(`/empresas/${e.id}`, { method: "PATCH", body: { ativo: !e.ativo } }),
     onSuccess: () => {
@@ -52,6 +53,9 @@ export function PaginaEmpresas() {
                     {e.ultimoEvento ? ` · último envio ${dataHora(e.ultimoEvento)}` : " · nenhum envio ainda"}
                   </p>
                 </div>
+                <Botao onClick={() => setReprocessando(e)} title="Montar de novo os atendimentos a partir dos envios já recebidos, com as regras atuais">
+                  <RefreshCw className="size-4" /> Reprocessar envios
+                </Botao>
                 <Botao variante="perigo" onClick={() => setLimpando(e)} title="Apagar contatos, atendimentos e envios recebidos">
                   <Eraser className="size-4" /> Apagar dados recebidos
                 </Botao>
@@ -68,6 +72,7 @@ export function PaginaEmpresas() {
       </Cartao>
       {nova && <FormEmpresa onFechar={() => setNova(false)} />}
       {limpando && <FormLimpar empresa={limpando} onFechar={() => setLimpando(null)} />}
+      {reprocessando && <FormReprocessar empresa={reprocessando} onFechar={() => setReprocessando(null)} />}
     </>
   );
 }
@@ -170,6 +175,61 @@ function FormLimpar({ empresa, onFechar }: { empresa: Empresa; onFechar: () => v
             </Botao>
             <Botao variante="perigo" disabled={!confere} carregando={limpar.isPending}>
               <Eraser className="size-4" /> Apagar dados
+            </Botao>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+type ResultadoReprocesso = { envios: number; refeitos: number; falhas: number; atendimentos: number };
+
+/** Refaz os atendimentos a partir dos envios guardados, com as regras de separação e de tempos atuais */
+function FormReprocessar({ empresa, onFechar }: { empresa: Empresa; onFechar: () => void }) {
+  const qc = useQueryClient();
+  const [confirmacao, setConfirmacao] = useState("");
+  const reprocessar = useMutation({
+    mutationFn: () => api<ResultadoReprocesso>(`/empresas/${empresa.id}/reprocessar`, { method: "POST", body: { confirmacao } }),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+  const confere = confirmacao.trim().toLowerCase() === empresa.nome.trim().toLowerCase();
+  return (
+    <Modal titulo={`Reprocessar envios de ${empresa.nome}`} aberto onFechar={onFechar}>
+      {reprocessar.data ? (
+        <div className="grid gap-3">
+          <Alerta tipo="ok">
+            Pronto: {numero(reprocessar.data.refeitos)} de {numero(reprocessar.data.envios)} envio(s) refeitos, {numero(reprocessar.data.atendimentos)} atendimento(s) no
+            painel. {reprocessar.data.falhas > 0 && `${numero(reprocessar.data.falhas)} envio(s) deram erro e ficaram de fora.`} A IA vai reorganizar origem e
+            departamento nos próximos minutos.
+          </Alerta>
+          <div className="flex justify-end">
+            <Botao variante="primario" onClick={onFechar}>
+              Fechar
+            </Botao>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-3 text-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (confere) reprocessar.mutate();
+          }}
+        >
+          <p className="text-ink-2">
+            Monta de novo todos os atendimentos a partir dos envios que a plataforma já mandou, usando as regras atuais (separação dos atendimentos, tempos, avisos).
+            Use depois de uma atualização do painel, para os dados antigos ficarem iguais aos novos.
+          </p>
+          <Alerta tipo="aviso">Correções feitas à mão (origem, departamento, etiquetas) se perdem e a IA classifica tudo de novo. Pode levar alguns minutos.</Alerta>
+          {reprocessar.error && <Alerta>{(reprocessar.error as Error).message}</Alerta>}
+          <Campo rotulo={`Para confirmar, digite o nome da empresa: ${empresa.nome}`} value={confirmacao} onChange={(e) => setConfirmacao(e.target.value)} autoComplete="off" />
+          <div className="flex justify-end gap-2">
+            <Botao type="button" variante="fantasma" onClick={onFechar}>
+              Cancelar
+            </Botao>
+            <Botao variante="primario" disabled={!confere} carregando={reprocessar.isPending}>
+              <RefreshCw className="size-4" /> Reprocessar
             </Botao>
           </div>
         </form>

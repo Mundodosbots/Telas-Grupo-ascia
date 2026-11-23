@@ -24,7 +24,8 @@ export type Mensagem = {
   chave: string;
 };
 
-const CABECALHO = /^(.{0,80}?) \((\d{4})-(\d{2})-(\d{2}) (\d{1,2}):(\d{2})(?::(\d{2}))?\s?([ap]m)\):[ \t]?/gim;
+/** "Nome (2026-11-23 9:20am): texto" — a plataforma escreve dia e mês sem zero à esquerda ("2026-11-9", "2026-3-6") */
+const CABECALHO = /^(.{0,80}?) \((\d{4})-(\d{1,2})-(\d{1,2}) (\d{1,2}):(\d{2})(?::(\d{2}))?\s?([ap]m)\):[ \t]?/gim;
 
 const normalizar = (s: string) =>
   s
@@ -130,13 +131,18 @@ const PROTOCOLO_QUALQUER = /protocolo\s*(?:de atendimento)?\s*(?:e|no?\.?|numero
 const ENCERRAMENTO = /agradece o contato|estamos encerrando|atendimento (foi )?(encerrado|finalizado)|numero de protocolo/;
 /** Robô avisando que vai passar para humano, ou apresentação automática do consultor */
 export const TRANSFERENCIA =
-  /(aguarde|em breve|ja ja|vou te (transferir|encaminhar)|iremos (transferir|encaminhar)).{0,90}(atendente|consultor|equipe|especialista|vendedor)|transferi(r|ndo|do) (seu|o) (contato|atendimento)|meu nome e .{0,80}(consultor|atendimento|vendas|vendedor)/;
+  /(aguarde|em breve|em instantes|ja ja|vou (te )?(transferir|encaminhar|conectar)|iremos (transferir|encaminhar)).{0,90}(atendente|consultor|equipe|especialista|vendedor|agente|time)|transferi(r|ndo|do) (seu|o) (contato|atendimento)|meu nome e .{0,80}(consultor|atendimento|vendas|vendedor)/;
 /** Pausa que separa conversas antigas sem protocolo */
 const PAUSA_NOVA_CONVERSA_MS = 8 * 3600_000;
 /** Dentro de um protocolo, só uma pausa muito longa separa (o cliente pode responder no dia seguinte) */
 const PAUSA_MESMO_PROTOCOLO_MS = 72 * 3600_000;
 /** Mensagens do cliente logo antes do protocolo pertencem ao novo atendimento */
 const JANELA_ANTES_PROTOCOLO_MS = 30 * 60_000;
+/**
+ * Depois do encerramento, o que chega logo em seguida (resposta da pesquisa "😍 Ótimo", "obrigada")
+ * ainda é do mesmo atendimento. Passado esse tempo, a próxima mensagem abre outro.
+ */
+export const JANELA_POS_ENCERRAMENTO_MS = 60 * 60_000;
 
 export type Sessao = {
   chave: string;
@@ -162,6 +168,8 @@ export function separarAtendimentos(msgs: Mensagem[], corte?: Date | null): Sess
   const sessoes: Sessao[] = [];
   let atual: Sessao | null = null;
   const encerradas = new Set<Sessao>();
+  /** Última mensagem de encerramento de cada atendimento */
+  const fechamento = new Map<Sessao, Mensagem>();
   const nova = (protocolo: string | null): Sessao => {
     const s: Sessao = { chave: "", protocolo, mensagens: [] };
     sessoes.push(s);
@@ -180,25 +188,38 @@ export function separarAtendimentos(msgs: Mensagem[], corte?: Date | null): Sess
     const limite = atual?.protocolo ? PAUSA_MESMO_PROTOCOLO_MS : PAUSA_NOVA_CONVERSA_MS;
     const texto = normalizar(m.texto);
     const encerra = m.tipo !== "cliente" && ENCERRAMENTO.test(texto);
+    const fechou = atual ? fechamento.get(atual) : undefined;
     if (
       !atual ||
       // pausa longa separa — menos quando é a mensagem de encerramento chegando atrasada
       (pausa > limite && !(encerra && !encerradas.has(atual))) ||
-      // depois do encerramento, a próxima mensagem do cliente abre outro atendimento
-      (encerradas.has(atual) && m.tipo === "cliente")
+      // depois do encerramento, só o que chega logo em seguida (pesquisa, "obrigada") fica neste atendimento
+      (fechou && !encerra && m.em.getTime() - fechou.em.getTime() > JANELA_POS_ENCERRAMENTO_MS)
     )
       atual = nova(null);
 
-    // Só o robô/integração abre protocolo; texto comparado sem acentos e em minúsculas
-    const inicio = m.tipo === "bot" || m.tipo === "api" ? PROTOCOLO_INICIO.exec(texto)?.[1] : undefined;
-    if (inicio && atual.protocolo && atual.protocolo !== inicio) {
-      // Novo protocolo: começa outro atendimento e leva junto as mensagens do cliente que o provocaram
+    // Robô, integração ou atendente abrem protocolo ("Seu protocolo de atendimento é X"); texto sem acentos e minúsculo
+    const inicio = m.tipo !== "cliente" ? PROTOCOLO_INICIO.exec(texto)?.[1] : undefined;
+    // O robô reiniciou o fluxo (novo protocolo) antes de qualquer atendente falar e sem encerrar: é o mesmo atendimento
+    const reinicio =
+      !!inicio &&
+      !!atual.protocolo &&
+      atual.protocolo !== inicio &&
+      !encerradas.has(atual) &&
+      !atual.mensagens.some((x) => x.tipo === "humano") &&
+      m.em.getTime() - atual.mensagens[0]!.em.getTime() <= JANELA_POS_ENCERRAMENTO_MS;
+    if (reinicio) {
+      atual.protocolo = inicio!;
+    } else if (inicio && atual.protocolo && atual.protocolo !== inicio) {
+      // Novo protocolo: começa outro atendimento e leva junto as mensagens que o provocaram
       const anteriorSessao: Sessao = atual;
       atual = nova(inicio);
       const levar: Mensagem[] = [];
+      const fim = fechamento.get(anteriorSessao);
       while (anteriorSessao.mensagens.length) {
         const ult = anteriorSessao.mensagens.at(-1)!;
-        if (ult.tipo !== "cliente" || m.em.getTime() - ult.em.getTime() > JANELA_ANTES_PROTOCOLO_MS) break;
+        // Atendimento anterior já encerrado: tudo o que veio depois do encerramento é do novo
+        if (fim ? ult === fim : ult.tipo !== "cliente" || m.em.getTime() - ult.em.getTime() > JANELA_ANTES_PROTOCOLO_MS) break;
         levar.unshift(anteriorSessao.mensagens.pop()!);
       }
       atual.mensagens.push(...levar);
@@ -210,7 +231,10 @@ export function separarAtendimentos(msgs: Mensagem[], corte?: Date | null): Sess
       if (qualquer) atual.protocolo = qualquer;
     }
     atual.mensagens.push(m);
-    if (encerra) encerradas.add(atual);
+    if (encerra) {
+      encerradas.add(atual);
+      fechamento.set(atual, m);
+    }
   }
   // Mesmo protocolo em dois blocos (ex.: mensagem de encerramento dias depois) = o mesmo atendimento
   const juntas: Sessao[] = [];
@@ -316,26 +340,55 @@ export type Tempos = {
   humanos: { remetente: string; primeiraMsgEm: Date; mensagens: number }[];
   transferencias: number;
   foraHorario: boolean;
+  /** O atendente falou antes do cliente: a empresa iniciou a conversa (não há espera do robô até o humano) */
+  iniciadoPelaEmpresa: boolean;
 };
+
+/**
+ * O que importa para medir um atendimento:
+ * - fila: começa na mensagem do robô que transfere (ou na 1ª do cliente);
+ * - ativo: o atendente falou antes do cliente (a empresa puxou a conversa, ex.: confirmar agendamento),
+ *   então não existe "espera do robô até o humano";
+ * - pós-encerramento: o que o cliente manda depois do encerramento (resposta da pesquisa, "obrigada")
+ *   não é mensagem esperando resposta, a não ser que um atendente volte a falar depois.
+ */
+function analisar<M extends { em: Date; tipo: string; texto: string }>(msgs: M[]) {
+  const iCliente = msgs.findIndex((m) => m.tipo === "cliente");
+  const iHumano = msgs.findIndex((m) => m.tipo === "humano");
+  const primeiraCliente = iCliente >= 0 ? msgs[iCliente]! : null;
+  const primeiraHumana = iHumano >= 0 ? msgs[iHumano]! : null;
+  const ativo = iHumano >= 0 && (iCliente < 0 || iHumano < iCliente);
+  const transferencia =
+    msgs.find((m) => (m.tipo === "bot" || m.tipo === "api") && TRANSFERENCIA.test(normalizar(m.texto)) && (!primeiraHumana || m.em <= primeiraHumana.em)) ?? null;
+  const inicioFila = transferencia?.em ?? primeiraCliente?.em ?? null;
+  let iFim = -1;
+  msgs.forEach((m, i) => {
+    if (m.tipo !== "cliente" && ENCERRAMENTO.test(normalizar(m.texto))) iFim = i;
+  });
+  if (iFim >= 0 && msgs.slice(iFim + 1).some((m) => m.tipo === "humano")) iFim = -1; // a conversa continuou
+  /** Mensagens do cliente que abrem um bloco na fila, com a resposta humana (se veio) */
+  const blocos: { i: number; resposta: M | null }[] = [];
+  // A fila começa na posição da transferência (mensagens do cliente no mesmo minuto, mas antes dela, não contam)
+  const iFila = transferencia ? msgs.indexOf(transferencia) : iCliente;
+  msgs.forEach((m, i) => {
+    if (m.tipo !== "cliente" || !inicioFila || iFila < 0 || i < iFila) return;
+    if (i > 0 && msgs[i - 1]!.tipo === "cliente") return; // mesmo bloco
+    if (iFim >= 0 && i > iFim) return; // depois do encerramento
+    blocos.push({ i, resposta: msgs.slice(i + 1).find((x) => x.tipo === "humano") ?? null });
+  });
+  return { primeiraCliente, primeiraHumana, ativo, transferencia, inicioFila, iFim, blocos };
+}
 
 export function calcularTempos(msgs: Mensagem[], horario: HorarioAtendimento, fuso: string): Tempos {
   const util = (a: Date, b: Date) => segundosUteis(a, b, horario, fuso);
   const conta = (t: TipoRemetente) => msgs.filter((m) => m.tipo === t).length;
-  const primeiraCliente = msgs.find((m) => m.tipo === "cliente") ?? null;
-  const primeiraHumana = msgs.find((m) => m.tipo === "humano") ?? null;
-  const transferencia =
-    msgs.find((m) => (m.tipo === "bot" || m.tipo === "api") && TRANSFERENCIA.test(normalizar(m.texto)) && (!primeiraHumana || m.em <= primeiraHumana.em)) ?? null;
-  const inicioFila = transferencia?.em ?? primeiraCliente?.em ?? null;
+  const { primeiraCliente, primeiraHumana, ativo, transferencia, inicioFila, blocos } = analisar(msgs);
 
-  // Espera de cada "bloco" de mensagens do cliente até a próxima resposta humana (depois que entrou na fila)
+  // Espera de cada bloco de mensagens do cliente até a próxima resposta humana (depois que entrou na fila)
   const esperas: number[] = [];
   let semResposta = 0;
-  for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i]!;
-    if (m.tipo !== "cliente" || !inicioFila || m.em < inicioFila) continue;
-    if (i > 0 && msgs[i - 1]!.tipo === "cliente") continue; // mesmo bloco
-    const resposta = msgs.slice(i + 1).find((x) => x.tipo === "humano");
-    if (resposta) esperas.push(util(m.em, resposta.em));
+  for (const b of blocos) {
+    if (b.resposta) esperas.push(util(msgs[b.i]!.em, b.resposta.em));
     else if (primeiraHumana) semResposta++;
   }
 
@@ -348,7 +401,7 @@ export function calcularTempos(msgs: Mensagem[], horario: HorarioAtendimento, fu
     else humanos.push({ remetente: m.remetente.trim(), primeiraMsgEm: m.em, mensagens: 1 });
   }
 
-  const tempoAteHumano = primeiraHumana && inicioFila && primeiraHumana.em >= inicioFila ? util(inicioFila, primeiraHumana.em) : null;
+  const tempoAteHumano = !ativo && primeiraHumana && inicioFila && primeiraHumana.em >= inicioFila ? util(inicioFila, primeiraHumana.em) : null;
   const ultima = msgs.at(-1)!;
   // Só conta como "sem atendimento humano" quem chegou na fila (o robô transferiu); conversa só com robô não
   const precisouHumano = !!transferencia || !!primeiraHumana;
@@ -363,7 +416,7 @@ export function calcularTempos(msgs: Mensagem[], horario: HorarioAtendimento, fu
     msgsApi: conta("api"),
     msgsHumano: conta("humano"),
     tempoAteHumanoS: tempoAteHumano,
-    tempoPrimeiraRespostaS: primeiraHumana && primeiraCliente && primeiraHumana.em >= primeiraCliente.em ? util(primeiraCliente.em, primeiraHumana.em) : null,
+    tempoPrimeiraRespostaS: !ativo && primeiraHumana && primeiraCliente && primeiraHumana.em >= primeiraCliente.em ? util(primeiraCliente.em, primeiraHumana.em) : null,
     tempoMedioRespostaS: esperas.length ? Math.round(esperas.reduce((s, x) => s + x, 0) / esperas.length) : null,
     tempoMaxRespostaS: esperas.length ? Math.max(...esperas) : null,
     respostasMedidas: esperas.length,
@@ -376,31 +429,32 @@ export function calcularTempos(msgs: Mensagem[], horario: HorarioAtendimento, fu
     humanos,
     transferencias: Math.max(0, humanos.length - 1),
     foraHorario: primeiraCliente ? !dentroDoHorario(primeiraCliente.em, horario, fuso) : false,
+    iniciadoPelaEmpresa: ativo,
   };
 }
 
+export type Marco = "transferencia" | "primeira_humana" | "encerramento" | "contato_ativo";
+
 /**
  * Marca, mensagem a mensagem, o que o painel mede (mesma regra de calcularTempos):
- * a mensagem do robô que transferiu, a 1ª resposta humana e, para cada bloco de mensagens
+ * a transferência do robô, a 1ª resposta humana, o encerramento e, para cada bloco de mensagens
  * do cliente na fila, quanto tempo (útil) ele esperou pela resposta ou se ficou sem resposta.
  */
 export function marcarEsperas<M extends { em: Date; tipo: string; texto: string }>(
   msgs: M[],
   horario: HorarioAtendimento,
   fuso: string,
-): (M & { esperaS?: number; semResposta?: boolean; marco?: "transferencia" | "primeira_humana" })[] {
+): (M & { esperaS?: number; semResposta?: boolean; marco?: Marco })[] {
   const util = (a: Date, b: Date) => segundosUteis(a, b, horario, fuso);
-  const primeiraHumana = msgs.find((m) => m.tipo === "humano") ?? null;
-  const primeiraCliente = msgs.find((m) => m.tipo === "cliente") ?? null;
-  const transferencia =
-    msgs.find((m) => (m.tipo === "bot" || m.tipo === "api") && TRANSFERENCIA.test(normalizar(m.texto)) && (!primeiraHumana || m.em <= primeiraHumana.em)) ?? null;
-  const inicioFila = transferencia?.em ?? primeiraCliente?.em ?? null;
+  const { primeiraHumana, ativo, transferencia, iFim, blocos } = analisar(msgs);
+  const porIndice = new Map(blocos.map((b) => [b.i, b.resposta]));
   return msgs.map((m, i) => {
-    const r: M & { esperaS?: number; semResposta?: boolean; marco?: "transferencia" | "primeira_humana" } = { ...m };
-    if (m === transferencia) r.marco = "transferencia";
-    if (m === primeiraHumana) r.marco = "primeira_humana";
-    if (m.tipo !== "cliente" || !inicioFila || m.em < inicioFila || (i > 0 && msgs[i - 1]!.tipo === "cliente")) return r;
-    const resposta = msgs.slice(i + 1).find((x) => x.tipo === "humano");
+    const r: M & { esperaS?: number; semResposta?: boolean; marco?: Marco } = { ...m };
+    if (m === transferencia && !ativo) r.marco = "transferencia";
+    if (m === primeiraHumana) r.marco = ativo ? "contato_ativo" : "primeira_humana";
+    if (i === iFim) r.marco = "encerramento";
+    if (!porIndice.has(i)) return r;
+    const resposta = porIndice.get(i);
     if (resposta) r.esperaS = util(m.em, resposta.em);
     else if (primeiraHumana) r.semResposta = true;
     return r;

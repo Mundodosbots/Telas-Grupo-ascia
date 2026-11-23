@@ -1,0 +1,1 @@
+ALTER TABLE "atendimentos" ADD COLUMN "iniciado_pela_empresa" boolean DEFAULT false NOT NULL;

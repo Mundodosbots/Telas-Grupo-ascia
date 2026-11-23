@@ -15,6 +15,8 @@ export const GLOSSARIO = {
     "Das conversas que foram para um humano, quantas tiveram a 1ª resposta do atendente em até 30 minutos depois que o robô transferiu. Quanto mais perto de 100%, melhor.",
   roboHumano:
     "Quanto tempo o cliente esperou entre o robô transferir (a mensagem de \"aguarde, vou te passar para um consultor\") e a 1ª mensagem do atendente. Conta só o horário de atendimento do chatbot.",
+  contatoAtivo:
+    "A conversa foi puxada pela empresa: o atendente mandou a primeira mensagem (ex.: confirmar um agendamento). Por isso não existe tempo de robô até o humano; as esperas do cliente depois disso continuam contando.",
   primeiraResposta:
     "Da 1ª mensagem que o cliente mandou até a 1ª resposta de um atendente humano. Inclui o tempo com o robô. Conta só o horário de atendimento.",
   respostaMedia:

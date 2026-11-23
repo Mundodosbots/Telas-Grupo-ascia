@@ -21,6 +21,7 @@ import { normalizarNome } from "../lib/util";
 import {
   calcularTempos,
   ehEncerramento,
+  JANELA_POS_ENCERRAMENTO_MS,
   juntarHistoricos,
   lerHistorico,
   localParaUtc,
@@ -126,7 +127,11 @@ export type ResultadoIngestao = {
   avisos: string[];
 };
 
-export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBytes: number): Promise<ResultadoIngestao> {
+/**
+ * `reprocessar`: refaz um envio já guardado (depois de mudar as regras): atualiza o registro do envio
+ * em vez de criar outro.
+ */
+export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBytes: number, reprocessar?: { eventoId: string }): Promise<ResultadoIngestao> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new EnvioInvalido("O corpo precisa ser um objeto JSON (o contato da plataforma)");
   const p = payload as Record<string, any>;
   const idExterno = String(p.id ?? p.user_id ?? "").trim();
@@ -142,16 +147,24 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
   // O envio sai logo depois do encerramento: a última mensagem tem que ser o encerramento,
   // com o mesmo protocolo do campo "protocolo numero", poucos minutos antes do envio.
   const avisos: string[] = [];
-  const ultimaMsg = (recentes.length ? recentes : msgs).at(-1);
+  const base = recentes.length ? recentes : msgs;
+  const ultimaMsg = base.at(-1);
+  // O encerramento pode vir seguido da resposta da pesquisa ("😍 Ótimo") — isso é normal
+  let iEnc = -1;
+  base.forEach((m, i) => ehEncerramento(m) && (iEnc = i));
+  const encerramento = iEnc >= 0 ? base[iEnc]! : null;
+  const depoisDoEnc = iEnc >= 0 ? base.slice(iEnc + 1) : [];
+  const encerramentoOk =
+    !!encerramento && depoisDoEnc.every((m) => m.tipo !== "humano" && m.em.getTime() - encerramento.em.getTime() <= JANELA_POS_ENCERRAMENTO_MS);
   const momento = lerMomento(campo("Momento Envio"), fuso) ?? new Date();
   const protocoloCampo = campo("protocolo numero", "Numero Protocolo", "Protocolo")?.replace(/\D/g, "") || null;
   if (!msgs.length) avisos.push("O envio chegou sem histórico de conversa.");
   else if (!recentes.length) avisos.push('O campo "Historico 50" veio vazio: o atendimento atual pode estar faltando.');
   if (ultimaMsg) {
-    if (!ehEncerramento(ultimaMsg))
+    if (!encerramentoOk)
       avisos.push(`A última mensagem do histórico (${fmtAviso(ultimaMsg.em, fuso)}) não é a de encerramento: o histórico pode estar incompleto.`);
-    else if (protocoloCampo && protocoloDaMensagem(ultimaMsg) && protocoloDaMensagem(ultimaMsg) !== protocoloCampo)
-      avisos.push(`O encerramento cita o protocolo ${protocoloDaMensagem(ultimaMsg)}, mas o campo "protocolo numero" veio ${protocoloCampo}.`);
+    else if (protocoloCampo && protocoloDaMensagem(encerramento!) && protocoloDaMensagem(encerramento!) !== protocoloCampo)
+      avisos.push(`O encerramento cita o protocolo ${protocoloDaMensagem(encerramento!)}, mas o campo "protocolo numero" veio ${protocoloCampo}.`);
     if (momento.getTime() - ultimaMsg.em.getTime() > ATRASO_MAXIMO_MS)
       avisos.push(`Histórico desatualizado: a última mensagem é de ${fmtAviso(ultimaMsg.em, fuso)} e o envio saiu ${fmtAviso(momento, fuso)}.`);
   }
@@ -345,6 +358,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
         transferencias: t.transferencias,
         foraHorario: t.foraHorario,
         historicoIncompleto: incompleto,
+        iniciadoPelaEmpresa: t.iniciadoPelaEmpresa,
         leadNovo:
           !!dadosContato.criadoNaPlataformaEm &&
           dadosContato.criadoNaPlataformaEm.getTime() >= t.inicioEm.getTime() - 2 * 3600_000 &&
@@ -394,27 +408,33 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
       mensagensNovas += novasMsgs;
     }
 
-    const [evento] = await tx
-      .insert(webhookEventos)
-      .values({
-        empresaId: chatbot.empresaId,
-        chatbotId: chatbot.id,
-        contatoId: contato!.id,
-        payload: p,
-        tamanhoBytes,
-        status: "processado",
-        resultado: {
-          sessoes: sessoes.length,
-          atendimentos_novos: novos,
-          atendimentos_atualizados: atualizados,
-          mensagens_novas: mensagensNovas,
-          mensagens_no_historico: msgs.length,
-          momento_envio: campo("Momento Envio") ?? null,
-          origem_regra: origemRegra,
-          avisos,
-        },
-      })
-      .returning({ id: webhookEventos.id });
+    // Atendimentos que ficaram sem mensagens (as mensagens foram reagrupadas em outro) deixam de existir
+    await tx.execute(sql`
+      delete from atendimentos a
+      where a.contato_id = ${contato!.id}
+        and not exists (select 1 from mensagens m where m.atendimento_id = a.id)`);
+
+    const resultado = {
+      sessoes: sessoes.length,
+      atendimentos_novos: novos,
+      atendimentos_atualizados: atualizados,
+      mensagens_novas: mensagensNovas,
+      mensagens_no_historico: msgs.length,
+      momento_envio: campo("Momento Envio") ?? null,
+      origem_regra: origemRegra,
+      avisos,
+      ...(reprocessar && { reprocessado_em: new Date().toISOString() }),
+    };
+    const [evento] = reprocessar
+      ? await tx
+          .update(webhookEventos)
+          .set({ contatoId: contato!.id, status: "processado", erro: null, resultado })
+          .where(eq(webhookEventos.id, reprocessar.eventoId))
+          .returning({ id: webhookEventos.id })
+      : await tx
+          .insert(webhookEventos)
+          .values({ empresaId: chatbot.empresaId, chatbotId: chatbot.id, contatoId: contato!.id, payload: p, tamanhoBytes, status: "processado", resultado })
+          .returning({ id: webhookEventos.id });
 
     return {
       eventoId: evento!.id,

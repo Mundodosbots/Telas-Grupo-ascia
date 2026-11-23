@@ -129,6 +129,7 @@ export type AtendimentoItem = {
   transferencias: number;
   leadNovo: boolean;
   historicoIncompleto: boolean;
+  iniciadoPelaEmpresa: boolean;
   status: StatusClassificacao;
   etiquetas: EtiquetaMini[];
 };
@@ -144,7 +145,28 @@ export type MensagemConversa = {
   esperaS?: number;
   /** Mensagem do cliente que ficou sem resposta humana */
   semResposta?: boolean;
-  marco?: "transferencia" | "primeira_humana";
+  marco?: "transferencia" | "primeira_humana" | "encerramento" | "contato_ativo";
+};
+
+/** Todos os atendimentos do mesmo cliente, com as mensagens, para ver a linha do tempo inteira */
+export type HistoricoCliente = {
+  atendimentos: {
+    id: string;
+    protocolo: string | null;
+    inicioEm: string;
+    ultimaMsgEm: string;
+    atendenteNome: string | null;
+    origemNome: string | null;
+    origemCor: string | null;
+    precisouHumano: boolean;
+    semHumano: boolean;
+    historicoIncompleto: boolean;
+    iniciadoPelaEmpresa: boolean;
+    tempoAteHumanoS: number | null;
+    esperasAcima30: number;
+    interesse: string | null;
+  }[];
+  mensagens: (MensagemConversa & { atendimentoId: string | null })[];
 };
 export type AtendimentoDetalhe = {
   id: string;
@@ -202,6 +224,7 @@ export type AtendimentoDetalhe = {
   foraHorario: boolean;
   leadNovo: boolean;
   historicoIncompleto: boolean;
+  iniciadoPelaEmpresa: boolean;
   classificacaoStatus: StatusClassificacao;
   classificacaoConfianca: number | null;
   classificacaoJustificativa: string | null;

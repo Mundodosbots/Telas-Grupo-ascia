@@ -108,7 +108,7 @@ export function PaginaAtendimentos() {
                       </td>
                       <td className="px-3 py-2.5">{a.departamentoNome ? <Chip cor={a.departamentoCor}>{a.departamentoNome}</Chip> : <span className="text-muted">—</span>}</td>
                       <td className={cx("px-3 py-2.5 text-right tabular", a.semHumano && "text-bad", a.atendidoAte30 === false && !a.semHumano && "text-warn")}>
-                        {a.semHumano ? "sem humano" : duracao(a.tempoAteHumanoS)}
+                        {a.iniciadoPelaEmpresa ? <span className="text-muted">contato ativo</span> : a.semHumano ? "sem humano" : duracao(a.tempoAteHumanoS)}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular">{duracao(a.tempoMedioRespostaS)}</td>
                       <td className="px-3 py-2.5 text-right tabular">

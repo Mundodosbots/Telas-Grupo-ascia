@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, ChevronUp, ExternalLink, Hourglass, MessageSquareOff, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import { api, type AtendimentoDetalhe, type MensagemConversa } from "../api";
+import { api, type AtendimentoDetalhe, type HistoricoCliente, type MensagemConversa } from "../api";
 import { useAuth } from "../auth";
 import { Alerta, Botao, Campo, Cartao, Carregando, Chip, cx, Dica, Ponto, Selecao, StatusBadge } from "../components/ui";
 import { useDepartamentos, useEtiquetas, useOrigens } from "../hooks";
@@ -25,6 +25,8 @@ export function PaginaAtendimento() {
 
   const [sp] = useSearchParams();
   const [foco, setFoco] = useState<string | null>(null);
+  /** Conversa só deste atendimento ou a linha do tempo inteira do cliente (padrão quando há outros) */
+  const [visao, setVisao] = useState<"este" | "cliente">("cliente");
   const esperas = useMemo(() => (q.data?.conversa ?? []).filter((m) => (m.esperaS ?? 0) > LIMITE || m.semResposta), [q.data]);
   const pior = useMemo(
     () => (q.data?.conversa ?? []).reduce<MensagemConversa | null>((p, m) => (m.esperaS !== undefined && (!p || m.esperaS > (p.esperaS ?? 0)) ? m : p), null),
@@ -50,6 +52,10 @@ export function PaginaAtendimento() {
   if (q.error) return <Alerta>{(q.error as Error).message}</Alerta>;
   if (!q.data) return <Carregando />;
   const a = q.data;
+  // Tempo de relógio (sem descontar o fora do horário) entre o início da fila e a 1ª resposta humana
+  const inicioFila = a.transferenciaEm ?? a.primeiraMsgClienteEm;
+  const corridoAteHumano =
+    inicioFila && a.primeiraRespostaHumanaEm && !a.iniciadoPelaEmpresa ? Math.max(0, (Date.parse(a.primeiraRespostaHumanaEm) - Date.parse(inicioFila)) / 1000) : null;
 
   return (
     <div className="grid gap-5">
@@ -81,13 +87,39 @@ export function PaginaAtendimento() {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tempo
           rotulo="Robô → humano"
-          dica={GLOSSARIO.roboHumano}
-          valor={a.semHumano ? "Sem humano" : a.historicoIncompleto && a.tempoAteHumanoS === null ? "Incompleto" : duracao(a.tempoAteHumanoS)}
+          dica={a.iniciadoPelaEmpresa ? GLOSSARIO.contatoAtivo : GLOSSARIO.roboHumano}
+          valor={
+            a.iniciadoPelaEmpresa
+              ? "Contato ativo"
+              : a.semHumano
+                ? "Sem humano"
+                : a.historicoIncompleto && a.tempoAteHumanoS === null
+                  ? "Incompleto"
+                  : !a.precisouHumano
+                    ? "Só robô"
+                    : duracao(a.tempoAteHumanoS)
+          }
+          sub={
+            a.iniciadoPelaEmpresa
+              ? "o atendente começou a conversa"
+              : corridoAteHumano !== null && a.tempoAteHumanoS !== null && corridoAteHumano - a.tempoAteHumanoS > 600
+                ? `no relógio: ${duracao(corridoAteHumano)} (fora do horário)`
+                : undefined
+          }
           ruim={a.semHumano || a.atendidoAte30 === false}
           bom={a.atendidoAte30 === true}
-          onClick={() => irPara(a.conversa.find((m) => m.marco === "primeira_humana")?.id ?? a.conversa.find((m) => m.marco === "transferencia")?.id)}
+          onClick={() =>
+            irPara(
+              a.conversa.find((m) => m.marco === "primeira_humana" || m.marco === "contato_ativo")?.id ?? a.conversa.find((m) => m.marco === "transferencia")?.id,
+            )
+          }
         />
-        <Tempo rotulo="1ª resposta humana" dica={GLOSSARIO.primeiraResposta} valor={duracao(a.tempoPrimeiraRespostaS)} sub="desde a 1ª mensagem do cliente" />
+        <Tempo
+          rotulo="1ª resposta humana"
+          dica={GLOSSARIO.primeiraResposta}
+          valor={a.iniciadoPelaEmpresa ? "—" : duracao(a.tempoPrimeiraRespostaS)}
+          sub={a.iniciadoPelaEmpresa ? "não se aplica: a empresa puxou a conversa" : "desde a 1ª mensagem do cliente"}
+        />
         <Tempo
           rotulo="Resposta média"
           dica={GLOSSARIO.respostaMedia}
@@ -122,8 +154,46 @@ export function PaginaAtendimento() {
               </Alerta>
             </div>
           )}
-          {a.foraHorario && <Alerta tipo="info">O cliente chegou fora do horário de atendimento — os tempos contam a partir da abertura.</Alerta>}
-          <Conversa msgs={a.conversa} fuso={a.fuso} foco={foco} onIr={irPara} />
+          {a.foraHorario && a.primeiraMsgClienteEm && (
+            <div className="mb-3">
+              <Alerta tipo="info">
+                O cliente escreveu {quando(a.primeiraMsgClienteEm, a.fuso)}, fora do horário de atendimento do chatbot. Os tempos do painel só contam o horário de
+                atendimento: o relógio começa a correr quando a loja abre.
+                {corridoAteHumano !== null && a.tempoAteHumanoS !== null && (
+                  <>
+                    {" "}
+                    Por isso o robô → humano aparece como <b>{duracao(a.tempoAteHumanoS)}</b>, mas no relógio o cliente esperou <b>{duracao(corridoAteHumano)}</b> pela 1ª
+                    resposta.
+                  </>
+                )}
+              </Alerta>
+            </div>
+          )}
+          {a.outros.length > 0 && (
+            <div className="mb-3 flex w-fit rounded-lg border border-line p-0.5 text-xs" role="tablist">
+              {(
+                [
+                  ["este", `Este atendimento (${a.conversa.length} msg)`],
+                  ["cliente", `Tudo do cliente (${a.outros.length + 1} atendimentos)`],
+                ] as const
+              ).map(([v, rotulo]) => (
+                <button
+                  key={v}
+                  role="tab"
+                  aria-selected={visao === v}
+                  onClick={() => setVisao(v)}
+                  className={cx("rounded-md px-2.5 py-1 cursor-pointer", visao === v ? "bg-ink text-surface font-medium" : "text-ink-2 hover:text-ink")}
+                >
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+          )}
+          {visao === "cliente" && a.outros.length > 0 ? (
+            <HistoricoDoCliente atual={a} foco={foco} onIr={irPara} />
+          ) : (
+            <Conversa msgs={a.conversa} fuso={a.fuso} foco={foco} onIr={irPara} />
+          )}
         </Cartao>
 
         <div className="grid content-start gap-5">
@@ -239,7 +309,7 @@ function Esperas({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: s
       {!itens.length ? (
         <p className="text-sm text-muted">Nenhuma espera medida.</p>
       ) : (
-        <ol className="-mx-2 grid max-h-72 gap-0.5 overflow-y-auto">
+        <ol className="-mx-2 grid max-h-72 grid-cols-[minmax(0,1fr)] gap-0.5 overflow-y-auto overflow-x-hidden">
           {itens.map((m) => {
             const ruim = (m.esperaS ?? 0) > LIMITE || m.semResposta;
             return (
@@ -250,7 +320,15 @@ function Esperas({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: s
                 >
                   <span className="w-20 shrink-0 text-muted tabular">{fmtHora(m.em, fuso)}</span>
                   <span className={cx("min-w-0 flex-1 truncate", m.marco ? "font-medium text-ink" : "text-ink-2")}>
-                    {m.marco === "transferencia" ? "Robô transferiu" : m.marco === "primeira_humana" ? `${m.remetente} respondeu` : m.texto}
+                    {m.marco === "transferencia"
+                      ? "Robô transferiu"
+                      : m.marco === "primeira_humana"
+                        ? `${m.remetente} respondeu`
+                        : m.marco === "contato_ativo"
+                          ? `${m.remetente} iniciou a conversa`
+                          : m.marco === "encerramento"
+                            ? "Encerramento"
+                            : m.texto}
                   </span>
                   {m.semResposta ? (
                     <span className="font-medium text-bad">sem resposta</span>
@@ -343,6 +421,7 @@ function Conversa({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: 
           <div key={m.id} id={`msg-${m.id}`} className={cx("grid scroll-mt-24 gap-1", cliente ? "justify-items-start" : "justify-items-end")}>
             {m.marco === "transferencia" && <Marco>Robô transferiu para o atendimento humano: a espera começa aqui</Marco>}
             {m.marco === "primeira_humana" && <Marco>1ª resposta de um atendente</Marco>}
+            {m.marco === "contato_ativo" && <Marco>O atendente começou a conversa (contato ativo): não há espera do robô até o humano</Marco>}
             <div
               className={cx(
                 "max-w-[85%] rounded-2xl px-3 py-2 text-sm",
@@ -367,6 +446,7 @@ function Conversa({ msgs, fuso, foco, onIr }: { msgs: MensagemConversa[]; fuso: 
                 <Hourglass className="size-3" /> Esperou {duracao(m.esperaS)} pela resposta{longa && " (mais de 30 min)"}
               </span>
             ) : null}
+            {m.marco === "encerramento" && <Marco>Atendimento encerrado · o que vem depois (ex.: resposta da pesquisa) não conta como espera</Marco>}
           </div>
         );
       })}
@@ -496,5 +576,140 @@ function Organizacao({ a }: { a: AtendimentoDetalhe }) {
         </form>
       )}
     </Cartao>
+  );
+}
+
+/** "domingo, 22/11 às 18:46" no fuso do chatbot */
+function quando(iso: string, fuso: string) {
+  const d = new Date(iso);
+  const dia = new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, weekday: "long" }).format(d);
+  const data = new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, day: "2-digit", month: "2-digit" }).format(d);
+  const hora = new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, hour: "2-digit", minute: "2-digit" }).format(d);
+  return `${dia}, ${data} às ${hora}`;
+}
+
+type ItemHistorico = HistoricoCliente["atendimentos"][number];
+
+/**
+ * Linha do tempo do cliente: todos os atendimentos em ordem, cada um com uma faixa de resumo.
+ * O atendimento aberto vem expandido; os outros abrem com um clique, sem sair da página.
+ */
+function HistoricoDoCliente({ atual, foco, onIr }: { atual: AtendimentoDetalhe; foco: string | null; onIr: (id: string) => void }) {
+  const { empresa } = useAuth();
+  const q = useQuery({
+    queryKey: ["historico-cliente", empresa?.id, atual.id, atual.ultimaMsgEm],
+    queryFn: () => api<HistoricoCliente>(`/atendimentos/${atual.id}/historico-cliente`),
+    enabled: !!empresa,
+  });
+  const [abertos, setAbertos] = useState<Set<string>>(() => new Set([atual.id]));
+  if (q.error) return <Alerta>{(q.error as Error).message}</Alerta>;
+  if (!q.data) return <Carregando texto="Carregando o histórico do cliente…" />;
+  const porAtendimento = new Map<string, MensagemConversa[]>();
+  const soltas: MensagemConversa[] = [];
+  for (const m of q.data.mensagens) {
+    if (m.atendimentoId) porAtendimento.set(m.atendimentoId, [...(porAtendimento.get(m.atendimentoId) ?? []), m]);
+    else soltas.push(m);
+  }
+  const alternar = (id: string) =>
+    setAbertos((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const todosAbertos = q.data.atendimentos.every((x) => abertos.has(x.id));
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+        <span>
+          {q.data.atendimentos.length} atendimento(s) deste cliente, do mais antigo ao mais recente. Clique numa faixa para abrir a conversa.
+        </span>
+        <button
+          onClick={() => setAbertos(todosAbertos ? new Set([atual.id]) : new Set(q.data!.atendimentos.map((x) => x.id)))}
+          className="font-medium text-accent hover:underline cursor-pointer"
+        >
+          {todosAbertos ? "Recolher os outros" : "Abrir todos"}
+        </button>
+      </div>
+      {q.data.atendimentos.map((x) => {
+        const msgs = x.id === atual.id ? atual.conversa : (porAtendimento.get(x.id) ?? []);
+        const aberto = abertos.has(x.id);
+        return (
+          <section key={x.id} className={cx("rounded-xl border", x.id === atual.id ? "border-accent" : "border-line")}>
+            <FaixaAtendimento x={x} total={msgs.length} atual={x.id === atual.id} aberto={aberto} fuso={atual.fuso} onAlternar={() => alternar(x.id)} />
+            {aberto && (
+              <div className="border-t border-line p-3">
+                {msgs.length ? (
+                  <Conversa msgs={msgs} fuso={atual.fuso} foco={x.id === atual.id ? foco : null} onIr={x.id === atual.id ? onIr : () => {}} />
+                ) : (
+                  <p className="text-sm text-muted">Sem mensagens guardadas.</p>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {soltas.length > 0 && (
+        <details className="rounded-xl border border-dashed border-line px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-muted">{soltas.length} mensagem(ns) fora de qualquer atendimento</summary>
+          <div className="mt-2">
+            <Conversa msgs={soltas} fuso={atual.fuso} foco={null} onIr={() => {}} />
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function FaixaAtendimento({
+  x,
+  total,
+  atual,
+  aberto,
+  fuso,
+  onAlternar,
+}: {
+  x: ItemHistorico;
+  total: number;
+  atual: boolean;
+  aberto: boolean;
+  fuso: string;
+  onAlternar: () => void;
+}) {
+  const fmt = (iso: string, opcoes: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, ...opcoes }).format(new Date(iso));
+  const mesmoDia = fmt(x.inicioEm, { dateStyle: "short" }) === fmt(x.ultimaMsgEm, { dateStyle: "short" });
+  const periodo = `${fmt(x.inicioEm, { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })} → ${fmt(
+    x.ultimaMsgEm,
+    mesmoDia ? { hour: "2-digit", minute: "2-digit" } : { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" },
+  )}`;
+  const situacao = x.iniciadoPelaEmpresa
+    ? { texto: "Contato ativo", classe: "bg-accent-soft text-accent-ink" }
+    : x.historicoIncompleto
+      ? { texto: "Incompleto", classe: "bg-warn-soft text-warn" }
+      : x.semHumano
+        ? { texto: "Sem humano", classe: "bg-bad-soft text-bad" }
+        : !x.precisouHumano
+          ? { texto: "Só robô", classe: "bg-surface-2 text-ink-2" }
+          : { texto: `Robô → humano ${duracao(x.tempoAteHumanoS)}`, classe: (x.tempoAteHumanoS ?? 0) > LIMITE ? "bg-bad-soft text-bad" : "bg-good-soft text-good" };
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+      <button onClick={onAlternar} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-left cursor-pointer" aria-expanded={aberto}>
+        {aberto ? <ChevronUp className="size-4 shrink-0 text-muted" /> : <ChevronDown className="size-4 shrink-0 text-muted" />}
+        <span className="tabular text-ink">{periodo}</span>
+        {x.protocolo && <span className="text-muted">#{x.protocolo}</span>}
+        <span className="font-medium text-ink">{x.atendenteNome ?? (x.precisouHumano ? "—" : "Robô")}</span>
+        <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-medium", situacao.classe)}>{situacao.texto}</span>
+        {x.esperasAcima30 > 0 && <span className="text-[11px] font-medium text-bad">{x.esperasAcima30}× espera &gt; 30 min</span>}
+        <span className="text-xs text-muted">{total} msg</span>
+        {x.interesse && <span className="min-w-0 truncate text-xs text-muted">· {x.interesse}</span>}
+      </button>
+      {atual ? (
+        <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-medium text-white">este atendimento</span>
+      ) : (
+        <Link to={`/atendimentos/${x.id}`} className="text-xs font-medium text-accent hover:underline">
+          Ver detalhes
+        </Link>
+      )}
+    </div>
   );
 }

@@ -279,6 +279,8 @@ export const atendimentos = pgTable(
     foraHorario: boolean("fora_horario").notNull().default(false),
     /** Faltou um trecho do histórico (buraco entre os campos) e não veio o encerramento: tempos parciais */
     historicoIncompleto: boolean("historico_incompleto").notNull().default(false),
+    /** A conversa foi puxada pelo atendente (contato ativo): sem tempo de robô até o humano */
+    iniciadoPelaEmpresa: boolean("iniciado_pela_empresa").notNull().default(false),
     leadNovo: boolean("lead_novo").notNull().default(false),
 
     fonte: text("fonte"),

@@ -1,11 +1,13 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db/client";
-import { atendentes, atendimentos, contatos, empresas, usuarios, webhookEventos } from "../db/schema";
+import { atendentes, atendimentos, chatbots, contatos, empresas, usuarios, webhookEventos } from "../db/schema";
 import { registrar } from "../lib/log";
 import { semearEmpresa } from "../db/seed";
 import { protegido } from "../lib/auth";
 import { normalizarNome } from "../lib/util";
+import { ingerirEnvio } from "../services/ingestao";
+import { acordarOrganizador } from "../services/organizador";
 
 const slugDe = (nome: string) =>
   normalizarNome(nome)
@@ -112,5 +114,50 @@ export const rotasEmpresas = new Elysia({ prefix: "/api/empresas" })
     {
       params: t.Object({ id: t.String({ format: "uuid" }) }),
       body: t.Object({ confirmacao: t.String(), atendentes: t.Boolean() }),
+    },
+  )
+  /**
+   * Refaz todos os envios já recebidos com as regras atuais (como se tivessem chegado agora, na ordem).
+   * Apaga contatos e atendimentos e monta de novo a partir dos envios guardados. Correções manuais se perdem.
+   */
+  .post(
+    "/:id/reprocessar",
+    async ({ params, body, set, usuario }) => {
+      const [e] = await db.select().from(empresas).where(eq(empresas.id, params.id));
+      if (!e) {
+        set.status = 404;
+        return { erro: "Empresa não encontrada" };
+      }
+      if (normalizarNome(body.confirmacao) !== normalizarNome(e.nome)) {
+        set.status = 400;
+        return { erro: `Para confirmar, digite o nome da empresa exatamente: ${e.nome}` };
+      }
+      const envios = await db
+        .select({ id: webhookEventos.id, payload: webhookEventos.payload, tamanho: webhookEventos.tamanhoBytes, chatbotId: webhookEventos.chatbotId })
+        .from(webhookEventos)
+        .where(and(eq(webhookEventos.empresaId, e.id), eq(webhookEventos.status, "processado")))
+        .orderBy(asc(webhookEventos.recebidoEm));
+      const bots = new Map((await db.select().from(chatbots).where(eq(chatbots.empresaId, e.id))).map((c) => [c.id, c]));
+      await db.delete(contatos).where(eq(contatos.empresaId, e.id));
+      let ok = 0;
+      const falhas: string[] = [];
+      for (const ev of envios) {
+        const bot = ev.chatbotId ? bots.get(ev.chatbotId) : undefined;
+        if (!bot) continue;
+        try {
+          await ingerirEnvio(bot, ev.payload, ev.tamanho, { eventoId: ev.id });
+          ok++;
+        } catch (err) {
+          falhas.push((err as Error).message);
+        }
+      }
+      const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(eq(atendimentos.empresaId, e.id))) as [{ total: number }];
+      registrar("REPROCESSAMENTO", `${e.nome}: ${ok} de ${envios.length} envio(s) refeitos por ${usuario.email}`, falhas.length ? `falhas: ${falhas.slice(0, 3).join(" | ")}` : null);
+      acordarOrganizador();
+      return { ok: true, envios: envios.length, refeitos: ok, falhas: falhas.length, atendimentos: total };
+    },
+    {
+      params: t.Object({ id: t.String({ format: "uuid" }) }),
+      body: t.Object({ confirmacao: t.String() }),
     },
   );
