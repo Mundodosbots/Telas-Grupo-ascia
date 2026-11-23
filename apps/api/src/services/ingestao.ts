@@ -18,7 +18,17 @@ import {
   type DadosAnuncio,
 } from "../db/schema";
 import { normalizarNome } from "../lib/util";
-import { calcularTempos, juntarHistoricos, lerHistorico, localParaUtc, separarAtendimentos, type Mensagem, type Sessao } from "./historico";
+import {
+  calcularTempos,
+  ehEncerramento,
+  juntarHistoricos,
+  lerHistorico,
+  localParaUtc,
+  protocoloDaMensagem,
+  separarAtendimentos,
+  type Mensagem,
+  type Sessao,
+} from "./historico";
 import { aplicarRegras } from "./regras";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -26,6 +36,42 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 /** Atendimentos mais antigos que isso entram pelo histórico, mas não vão para a IA (custo) */
 const JANELA_IA_DIAS = 60;
 const MAX_VALOR_CAMPO = 3000;
+/** O envio sai poucos minutos depois do encerramento; mais que isso, o histórico está desatualizado */
+const ATRASO_MAXIMO_MS = 60 * 60_000;
+
+const fmtAviso = (d: Date, fuso: string) =>
+  new Intl.DateTimeFormat("pt-BR", { timeZone: fuso, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d);
+
+/** "1795271914" (segundos), milissegundos ou data por extenso */
+function lerMomento(v: string | undefined, fuso: string): Date | undefined {
+  if (!v) return undefined;
+  if (/^\d{10}$/.test(v)) return new Date(Number(v) * 1000);
+  if (/^\d{13}$/.test(v)) return new Date(Number(v));
+  return lerData(v, fuso, false);
+}
+
+/**
+ * Histórico: "Historico 50" (as últimas mensagens, sempre com o atendimento que acabou) é a fonte principal;
+ * "Historico Conversa" (o grande) completa o passado. O grande pode vir cortado pelo tamanho: se ele termina
+ * antes de o de 50 começar, sobra um buraco no meio, e o que ficou de cada lado não pode ser juntado.
+ */
+function montarHistorico(mapa: Map<string, string>, fuso: string) {
+  const ehRecente = (k: string) => /^historico\s*50$/.test(k);
+  const recentes = lerHistorico([...mapa.entries()].find(([k]) => ehRecente(k))?.[1], fuso);
+  const antigas = juntarHistoricos(...[...mapa.entries()].filter(([k]) => k.startsWith("historico") && !ehRecente(k)).map(([, v]) => lerHistorico(v, fuso)));
+  if (!recentes.length || !antigas.length) return { msgs: juntarHistoricos(recentes, antigas), recentes, corte: null as Date | null, buraco: null as null | { de: Date; ate: Date } };
+  const inicioRecentes = recentes[0]!.em;
+  // No trecho que o de 50 cobre, vale o de 50 (a última mensagem do grande pode ter vindo cortada no meio)
+  const doPassado = antigas.filter((m) => m.em < inicioRecentes);
+  const fimAntigas = antigas.at(-1)!.em;
+  const temBuraco = fimAntigas < inicioRecentes;
+  return {
+    msgs: juntarHistoricos(doPassado, recentes),
+    recentes,
+    corte: temBuraco ? inicioRecentes : null,
+    buraco: temBuraco ? { de: fimAntigas, ate: inicioRecentes } : null,
+  };
+}
 
 export class EnvioInvalido extends Error {}
 
@@ -76,6 +122,8 @@ export type ResultadoIngestao = {
   atendimentosAtualizados: number;
   mensagensNovas: number;
   origemRegra: string | null;
+  /** Problemas encontrados no histórico (não impedem a gravação) */
+  avisos: string[];
 };
 
 export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBytes: number): Promise<ResultadoIngestao> {
@@ -87,9 +135,30 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
   const fuso = chatbot.fuso;
 
   // ---------- dados do envio ----------
-  const historicos = [...mapa.entries()].filter(([k]) => k.startsWith("historico")).map(([, v]) => v);
-  const msgs = juntarHistoricos(...historicos.map((h) => lerHistorico(h, fuso)));
-  const sessoes = separarAtendimentos(msgs);
+  const { msgs, recentes, corte, buraco } = montarHistorico(mapa, fuso);
+  const sessoes = separarAtendimentos(msgs, corte);
+
+  // ---------- conferência do envio ----------
+  // O envio sai logo depois do encerramento: a última mensagem tem que ser o encerramento,
+  // com o mesmo protocolo do campo "protocolo numero", poucos minutos antes do envio.
+  const avisos: string[] = [];
+  const ultimaMsg = (recentes.length ? recentes : msgs).at(-1);
+  const momento = lerMomento(campo("Momento Envio"), fuso) ?? new Date();
+  const protocoloCampo = campo("protocolo numero", "Numero Protocolo", "Protocolo")?.replace(/\D/g, "") || null;
+  if (!msgs.length) avisos.push("O envio chegou sem histórico de conversa.");
+  else if (!recentes.length) avisos.push('O campo "Historico 50" veio vazio: o atendimento atual pode estar faltando.');
+  if (ultimaMsg) {
+    if (!ehEncerramento(ultimaMsg))
+      avisos.push(`A última mensagem do histórico (${fmtAviso(ultimaMsg.em, fuso)}) não é a de encerramento: o histórico pode estar incompleto.`);
+    else if (protocoloCampo && protocoloDaMensagem(ultimaMsg) && protocoloDaMensagem(ultimaMsg) !== protocoloCampo)
+      avisos.push(`O encerramento cita o protocolo ${protocoloDaMensagem(ultimaMsg)}, mas o campo "protocolo numero" veio ${protocoloCampo}.`);
+    if (momento.getTime() - ultimaMsg.em.getTime() > ATRASO_MAXIMO_MS)
+      avisos.push(`Histórico desatualizado: a última mensagem é de ${fmtAviso(ultimaMsg.em, fuso)} e o envio saiu ${fmtAviso(momento, fuso)}.`);
+  }
+  if (buraco)
+    avisos.push(
+      `Faltou um trecho da conversa entre ${fmtAviso(buraco.de, fuso)} e ${fmtAviso(buraco.ate, fuso)} ("Historico Conversa" veio cortado). O atendimento desse intervalo fica marcado como incompleto.`,
+    );
 
   const nomesEtiquetas = campo("Etiquetas Nomes", "user_tags");
   const etiquetasNomes = nomesEtiquetas
@@ -222,6 +291,14 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
         if (extras.length) todas = juntarHistoricos(s.mensagens, extras);
       }
       const t = calcularTempos(todas, chatbot.horario, fuso);
+      // Faltaram mensagens (buraco no histórico) e nem o que já estava guardado tem o encerramento:
+      // não dá para afirmar "sem humano" nem contar mensagens sem resposta
+      const incompleto = !!s.incompleta && !todas.some(ehEncerramento);
+      if (incompleto) {
+        t.semHumano = false;
+        t.semResposta = 0;
+        if (t.tempoAteHumanoS === null) t.atendidoAte30 = null;
+      }
       const humanosIds = t.humanos.map((h) => humanoPorNome.get(nomeDeAtendente(h.remetente))).filter((x): x is Atendente => !!x);
       const principal = (ultima && atribuido) || humanosIds.at(-1) || null;
       const novaChave = s.protocolo ? s.chave : (existente?.protocolo ? existente.chave : s.chave);
@@ -267,6 +344,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
         duracaoS: t.duracaoS,
         transferencias: t.transferencias,
         foraHorario: t.foraHorario,
+        historicoIncompleto: incompleto,
         leadNovo:
           !!dadosContato.criadoNaPlataformaEm &&
           dadosContato.criadoNaPlataformaEm.getTime() >= t.inicioEm.getTime() - 2 * 3600_000 &&
@@ -333,6 +411,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
           mensagens_no_historico: msgs.length,
           momento_envio: campo("Momento Envio") ?? null,
           origem_regra: origemRegra,
+          avisos,
         },
       })
       .returning({ id: webhookEventos.id });
@@ -348,6 +427,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
       atendimentosAtualizados: atualizados,
       mensagensNovas,
       origemRegra,
+      avisos,
     };
   });
 }

@@ -84,6 +84,11 @@ export function PaginaAtendimentos() {
                         <p className="flex items-center gap-1.5 font-medium text-ink">
                           {a.contatoNome || "Sem nome"}
                           {a.leadNovo && <span className="rounded-full bg-good-soft px-1.5 text-[10px] font-semibold text-good">NOVO</span>}
+                          {a.historicoIncompleto && (
+                            <span className="rounded-full bg-warn-soft px-1.5 text-[10px] font-semibold text-warn" title="Faltou um trecho da conversa no envio: tempos parciais">
+                              INCOMPLETO
+                            </span>
+                          )}
                         </p>
                         <p className="flex items-center gap-1.5 text-xs text-muted">
                           <Ponto cor={a.chatbotCor} className="size-2" />

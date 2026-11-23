@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogIn, Plus } from "lucide-react";
+import { Eraser, LogIn, Plus } from "lucide-react";
 import { useState } from "react";
 import { api, type Empresa } from "../api";
 import { useAuth } from "../auth";
@@ -13,6 +13,7 @@ export function PaginaEmpresas() {
   const qc = useQueryClient();
   const lista = useQuery({ queryKey: ["empresas-saas"], queryFn: () => api<Empresa[]>("/empresas") });
   const [nova, setNova] = useState(false);
+  const [limpando, setLimpando] = useState<Empresa | null>(null);
   const alternar = useMutation({
     mutationFn: (e: Empresa) => api(`/empresas/${e.id}`, { method: "PATCH", body: { ativo: !e.ativo } }),
     onSuccess: () => {
@@ -51,6 +52,9 @@ export function PaginaEmpresas() {
                     {e.ultimoEvento ? ` · último envio ${dataHora(e.ultimoEvento)}` : " · nenhum envio ainda"}
                   </p>
                 </div>
+                <Botao variante="perigo" onClick={() => setLimpando(e)} title="Apagar contatos, atendimentos e envios recebidos">
+                  <Eraser className="size-4" /> Apagar dados recebidos
+                </Botao>
                 <Botao variante="fantasma" carregando={alternar.isPending && alternar.variables?.id === e.id} onClick={() => alternar.mutate(e)}>
                   {e.ativo ? "Desativar" : "Reativar"}
                 </Botao>
@@ -63,6 +67,7 @@ export function PaginaEmpresas() {
         )}
       </Cartao>
       {nova && <FormEmpresa onFechar={() => setNova(false)} />}
+      {limpando && <FormLimpar empresa={limpando} onFechar={() => setLimpando(null)} />}
     </>
   );
 }
@@ -105,6 +110,70 @@ function FormEmpresa({ onFechar }: { onFechar: () => void }) {
           </Botao>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+type ResultadoLimpeza = { contatos: number; atendimentos: number; envios: number; atendentes: number };
+
+/** Apaga o que veio da plataforma para recomeçar a contagem. Pede o nome da empresa para confirmar. */
+function FormLimpar({ empresa, onFechar }: { empresa: Empresa; onFechar: () => void }) {
+  const qc = useQueryClient();
+  const [confirmacao, setConfirmacao] = useState("");
+  const [comAtendentes, setComAtendentes] = useState(true);
+  const limpar = useMutation({
+    mutationFn: () => api<ResultadoLimpeza>(`/empresas/${empresa.id}/limpar`, { method: "POST", body: { confirmacao, atendentes: comAtendentes } }),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+  const confere = confirmacao.trim().toLowerCase() === empresa.nome.trim().toLowerCase();
+  return (
+    <Modal titulo={`Apagar dados recebidos de ${empresa.nome}`} aberto onFechar={onFechar}>
+      {limpar.data ? (
+        <div className="grid gap-3">
+          <Alerta tipo="ok">
+            Pronto. Apagados: {numero(limpar.data.contatos)} contato(s), {numero(limpar.data.atendimentos)} atendimento(s), {numero(limpar.data.envios)} envio(s)
+            {limpar.data.atendentes ? ` e ${numero(limpar.data.atendentes)} atendente(s)` : ""}. Os próximos envios da plataforma começam do zero.
+          </Alerta>
+          <div className="flex justify-end">
+            <Botao variante="primario" onClick={onFechar}>
+              Fechar
+            </Botao>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="grid gap-3 text-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (confere) limpar.mutate();
+          }}
+        >
+          <Alerta tipo="erro">Isto não tem volta. Os dados apagados não podem ser recuperados.</Alerta>
+          <div className="grid gap-1">
+            <p className="font-medium text-ink">Vai apagar:</p>
+            <p className="text-ink-2">contatos, atendimentos, conversas, tempos, classificações da IA e a lista de envios recebidos ({numero(empresa.atendimentos)} atendimento(s) hoje).</p>
+            <p className="mt-1 font-medium text-ink">Fica como está:</p>
+            <p className="text-ink-2">chatbots e tokens (a plataforma continua enviando normalmente), usuários, origens, departamentos, etiquetas, regras de origem e times.</p>
+          </div>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-0.5 size-4" checked={comAtendentes} onChange={(e) => setComAtendentes(e.target.checked)} />
+            <span>
+              Apagar também os atendentes
+              <span className="block text-xs text-muted">Eles são criados de novo sozinhos nos próximos envios. Desmarque para manter times e mesclas já feitas.</span>
+            </span>
+          </label>
+          {limpar.error && <Alerta>{(limpar.error as Error).message}</Alerta>}
+          <Campo rotulo={`Para confirmar, digite o nome da empresa: ${empresa.nome}`} value={confirmacao} onChange={(e) => setConfirmacao(e.target.value)} autoComplete="off" />
+          <div className="flex justify-end gap-2">
+            <Botao type="button" variante="fantasma" onClick={onFechar}>
+              Cancelar
+            </Botao>
+            <Botao variante="perigo" disabled={!confere} carregando={limpar.isPending}>
+              <Eraser className="size-4" /> Apagar dados
+            </Botao>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Copy } from "lucide-react";
+import { Copy, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api, qs, type Evento, type Pagina } from "../api";
@@ -66,7 +66,8 @@ export function PaginaEventos() {
           <>
             <ul className="-mx-4 divide-y divide-line">
               {q.data.itens.map((e) => {
-                const r = e.resultado as Record<string, number | string | null> | null;
+                const r = e.resultado as (Record<string, number | string | null> & { avisos?: string[] }) | null;
+                const avisos = Array.isArray(r?.avisos) ? r!.avisos : [];
                 return (
                   <li key={e.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
                     <span className={cx("rounded-full px-2 py-0.5 text-xs font-medium", STATUS[e.status].classe)}>{STATUS[e.status].rotulo}</span>
@@ -93,6 +94,15 @@ export function PaginaEventos() {
                     <Botao variante="fantasma" onClick={() => copiarJson(e.id)}>
                       <Copy className="size-4" /> {copiado === e.id ? "Copiado!" : "Copiar JSON"}
                     </Botao>
+                    {avisos.length > 0 && (
+                      <ul className="grid w-full gap-1 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+                        {avisos.map((a) => (
+                          <li key={a} className="flex gap-1.5">
+                            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> {a}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </li>
                 );
               })}

@@ -138,9 +138,27 @@ const PAUSA_MESMO_PROTOCOLO_MS = 72 * 3600_000;
 /** Mensagens do cliente logo antes do protocolo pertencem ao novo atendimento */
 const JANELA_ANTES_PROTOCOLO_MS = 30 * 60_000;
 
-export type Sessao = { chave: string; protocolo: string | null; mensagens: Mensagem[] };
+export type Sessao = {
+  chave: string;
+  protocolo: string | null;
+  mensagens: Mensagem[];
+  /** Tem a mensagem de encerramento */
+  encerrada?: boolean;
+  /** Foi cortada por um buraco no histórico antes de encerrar (faltam mensagens) */
+  incompleta?: boolean;
+};
 
-export function separarAtendimentos(msgs: Mensagem[]): Sessao[] {
+/** A mensagem fecha o atendimento? (do atendente ou do robô) */
+export const ehEncerramento = (m: Mensagem) => m.tipo !== "cliente" && ENCERRAMENTO.test(normalizar(m.texto));
+/** Número de protocolo citado numa mensagem (ex.: "Numero de protocolo: 54236") */
+export const protocoloDaMensagem = (m: Mensagem) => PROTOCOLO_QUALQUER.exec(normalizar(m.texto))?.[1] ?? null;
+
+/**
+ * Separa o histórico em atendimentos.
+ * `corte`: começo de um trecho que veio depois de um buraco no histórico (mensagens que faltaram).
+ * Nada atravessa o corte; o atendimento que ficou aberto antes dele é marcado como incompleto.
+ */
+export function separarAtendimentos(msgs: Mensagem[], corte?: Date | null): Sessao[] {
   const sessoes: Sessao[] = [];
   let atual: Sessao | null = null;
   const encerradas = new Set<Sessao>();
@@ -152,7 +170,12 @@ export function separarAtendimentos(msgs: Mensagem[]): Sessao[] {
 
   for (const m of msgs) {
     const anterior = atual?.mensagens.at(-1);
-    const pausa = anterior ? m.em.getTime() - anterior.em.getTime() : 0;
+    // Buraco no histórico: o que vem depois começa outro bloco; o anterior, se não encerrou, está incompleto
+    if (atual && anterior && corte && anterior.em < corte && m.em >= corte) {
+      if (!encerradas.has(atual)) atual.incompleta = true;
+      atual = null;
+    }
+    const pausa = anterior && atual ? m.em.getTime() - anterior.em.getTime() : 0;
     // Conversa com protocolo continua mesmo de um dia para o outro; sem protocolo, pausa longa separa
     const limite = atual?.protocolo ? PAUSA_MESMO_PROTOCOLO_MS : PAUSA_NOVA_CONVERSA_MS;
     const texto = normalizar(m.texto);
@@ -193,12 +216,16 @@ export function separarAtendimentos(msgs: Mensagem[]): Sessao[] {
   const juntas: Sessao[] = [];
   for (const s of sessoes.filter((x) => x.mensagens.length)) {
     const mesma = s.protocolo ? juntas.find((j) => j.protocolo === s.protocolo) : undefined;
-    if (mesma) mesma.mensagens.push(...s.mensagens);
-    else juntas.push(s);
+    if (mesma) {
+      mesma.mensagens.push(...s.mensagens);
+      mesma.incompleta = mesma.incompleta || s.incompleta;
+    } else juntas.push(s);
   }
   for (const s of juntas) {
     s.mensagens.sort((a, b) => a.em.getTime() - b.em.getTime() || a.seq - b.seq);
     s.chave = s.protocolo ? `p:${s.protocolo}` : `t:${s.mensagens[0]!.em.toISOString()}`;
+    s.encerrada = s.mensagens.some(ehEncerramento);
+    if (s.encerrada) s.incompleta = false;
   }
   return juntas;
 }

@@ -82,7 +82,7 @@ export function PaginaAtendimento() {
         <Tempo
           rotulo="Robô → humano"
           dica={GLOSSARIO.roboHumano}
-          valor={a.semHumano ? "Sem humano" : duracao(a.tempoAteHumanoS)}
+          valor={a.semHumano ? "Sem humano" : a.historicoIncompleto && a.tempoAteHumanoS === null ? "Incompleto" : duracao(a.tempoAteHumanoS)}
           ruim={a.semHumano || a.atendidoAte30 === false}
           bom={a.atendidoAte30 === true}
           onClick={() => irPara(a.conversa.find((m) => m.marco === "primeira_humana")?.id ?? a.conversa.find((m) => m.marco === "transferencia")?.id)}
@@ -114,6 +114,14 @@ export function PaginaAtendimento() {
             </span>
           }
         >
+          {a.historicoIncompleto && (
+            <div className="mb-3">
+              <Alerta tipo="aviso">
+                Histórico incompleto: a plataforma não mandou um trecho desta conversa (o fim dela ficou de fora do envio). Os tempos são parciais e este atendimento não
+                conta como "sem atendimento humano".
+              </Alerta>
+            </div>
+          )}
           {a.foraHorario && <Alerta tipo="info">O cliente chegou fora do horário de atendimento — os tempos contam a partir da abertura.</Alerta>}
           <Conversa msgs={a.conversa} fuso={a.fuso} foco={foco} onIr={irPara} />
         </Cartao>
@@ -137,7 +145,7 @@ export function PaginaAtendimento() {
                 {a.transferencias > 0 && <li className="text-xs text-muted">{a.transferencias} transferência(s) entre atendentes</li>}
               </ol>
             ) : (
-              <p className="text-sm text-muted">{a.precisouHumano ? "Foi para a fila, mas nenhum humano respondeu." : "Resolvido só pelo robô."}</p>
+              <p className="text-sm text-muted">{a.historicoIncompleto ? "Não dá para saber: o trecho em que o atendente entraria não veio no envio." : a.precisouHumano ? "Foi para a fila, mas nenhum humano respondeu." : "Resolvido só pelo robô."}</p>
             )}
           </Cartao>
           <Cartao titulo="Entrada">

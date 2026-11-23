@@ -8,6 +8,13 @@
       "when": 1795102992143,
       "tag": "0000_saas_inicial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795438952013,
+      "tag": "0001_historico_incompleto",
+      "breakpoints": true
     }
   ]
 }

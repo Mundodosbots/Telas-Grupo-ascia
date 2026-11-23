@@ -277,6 +277,8 @@ export const atendimentos = pgTable(
     transferencias: integer("transferencias").notNull().default(0),
     /** Cliente chegou fora do horário de atendimento */
     foraHorario: boolean("fora_horario").notNull().default(false),
+    /** Faltou um trecho do histórico (buraco entre os campos) e não veio o encerramento: tempos parciais */
+    historicoIncompleto: boolean("historico_incompleto").notNull().default(false),
     leadNovo: boolean("lead_novo").notNull().default(false),
 
     fonte: text("fonte"),

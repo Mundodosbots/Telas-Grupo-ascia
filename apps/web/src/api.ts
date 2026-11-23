@@ -128,6 +128,7 @@ export type AtendimentoItem = {
   esperasAcima30: number;
   transferencias: number;
   leadNovo: boolean;
+  historicoIncompleto: boolean;
   status: StatusClassificacao;
   etiquetas: EtiquetaMini[];
 };
@@ -200,6 +201,7 @@ export type AtendimentoDetalhe = {
   transferencias: number;
   foraHorario: boolean;
   leadNovo: boolean;
+  historicoIncompleto: boolean;
   classificacaoStatus: StatusClassificacao;
   classificacaoConfianca: number | null;
   classificacaoJustificativa: string | null;

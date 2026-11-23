@@ -1,0 +1,1 @@
+ALTER TABLE "atendimentos" ADD COLUMN "historico_incompleto" boolean DEFAULT false NOT NULL;

@@ -79,6 +79,7 @@ const colunasLista = {
   esperasAcima30: atendimentos.esperasAcima30,
   transferencias: atendimentos.transferencias,
   leadNovo: atendimentos.leadNovo,
+  historicoIncompleto: atendimentos.historicoIncompleto,
   status: atendimentos.classificacaoStatus,
 };
 

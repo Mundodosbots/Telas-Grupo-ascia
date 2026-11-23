@@ -113,6 +113,7 @@ async function receber({ request, headers, query, set }: { request: Request; hea
       `${r.sessoes} atendimento(s) no histórico: ${r.atendimentosNovos} novo(s), ${r.atendimentosAtualizados} atualizado(s), ${r.mensagensNovas} mensagem(ns) nova(s)`,
       r.origemRegra?.replace(/^Regra: /, "origem pela regra: "),
       lido.corrigido && "JSON corrigido (quebras de linha cruas)",
+      r.avisos.length > 0 && `AVISOS: ${r.avisos.join(" | ")}`,
     );
     acordarOrganizador();
     set.status = 202;
@@ -123,6 +124,7 @@ async function receber({ request, headers, query, set }: { request: Request; hea
       atendimentos_no_historico: r.sessoes,
       atendimentos_novos: r.atendimentosNovos,
       atendimentos_atualizados: r.atendimentosAtualizados,
+      avisos: r.avisos,
       mensagens_novas: r.mensagensNovas,
     };
   } catch (e) {

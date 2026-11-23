@@ -8,8 +8,8 @@ import { useChatbots } from "../hooks";
 type CampoPlataforma = { nome: string; valor: string; para: string };
 
 const ESSENCIAIS: CampoPlataforma[] = [
-  { nome: "Historico Conversa", valor: "{{chat_history_details_large}}", para: "Últimas 200 mensagens com remetente e horário. É a base de todos os tempos." },
-  { nome: "Historico 50", valor: "{{chat_history_details}}", para: "Últimas 50 mensagens. Garante o atendimento atual quando o de 200 é cortado." },
+  { nome: "Historico Conversa", valor: "{{chat_history_details_large}}", para: "Histórico desde o começo do contato (pode vir cortado no fim). Completa o passado. Crie o campo como TEXTO LONGO." },
+  { nome: "Historico 50", valor: "{{chat_history_details}}", para: "Últimas 50 mensagens: traz sempre o atendimento que acabou, com o encerramento. Crie o campo como TEXTO LONGO." },
   { nome: "Atendente", valor: "{{assigned_admin_name}}", para: "Atendente atribuído à conversa." },
   { nome: "Atendente ID", valor: "{{assigned_admin_id}}", para: "Identifica o atendente mesmo se o nome mudar." },
   { nome: "Etiquetas Nomes", valor: "{{user_tags}}", para: "Nomes das etiquetas do contato (ex.: Grow). Usado nas regras de origem." },
@@ -33,7 +33,7 @@ const UTEIS: CampoPlataforma[] = [
   { nome: "Data Criacao Contato", valor: "{{subscribed_date}}", para: "Separa lead novo de cliente que voltou." },
   { nome: "Ref Entrada", valor: "{{last_ref}}", para: "Link, QR code ou botão do site que iniciou a conversa." },
   { nome: "Cidade Contato", valor: "{{user_city}}", para: "Cidade, quando a plataforma souber (a IA também tenta achar na conversa)." },
-  { nome: "Momento Envio", valor: "{{current_timestamp}}", para: "Hora exata do disparo." },
+  { nome: "Momento Envio", valor: "{{current_timestamp}}", para: "Hora exata do disparo. O painel confere se o encerramento é de poucos minutos antes." },
 ];
 
 const EXEMPLO = `{
@@ -62,6 +62,16 @@ const PROBLEMAS: { sintoma: string; solucao: ReactNode }[] = [
   { sintoma: "Resposta 401 “Envie o token no cabeçalho”", solucao: <>Faltou o cabeçalho <code>Authorization</code> no External Request (aba Cabeçalhos).</> },
   { sintoma: "Resposta 400 “JSON inválido”", solucao: <>O corpo não é um JSON válido. Envie os dados completos do contato, sem montar o JSON à mão.</> },
   { sintoma: "Resposta 422 “Faltou o id do contato”", solucao: <>O corpo não é o contato da plataforma. Mande o contato completo, com <code>id</code> e <code>custom_fields</code>.</> },
+  {
+    sintoma: "Aviso amarelo em Envios recebidos",
+    solucao: (
+      <>
+        O painel confere cada envio: a última mensagem do <b>Historico 50</b> tem que ser o encerramento, do mesmo protocolo, poucos minutos antes do envio. Se
+        aparecer "histórico cortado" ou "desatualizado", confira se os campos de histórico são do tipo <b>texto longo</b> e se são preenchidos logo antes do
+        External Request.
+      </>
+    ),
+  },
   { sintoma: "Chegou, mas sem tempos nem conversa", solucao: <>Os campos <b>Historico Conversa</b> e <b>Historico 50</b> estão vazios. Confira se o fluxo preenche os dois antes do External Request.</> },
   { sintoma: "Sem atendente ou sem origem", solucao: <>Faltam os campos <b>Atendente</b>, <b>Fonte do contato</b> ou <b>Etiquetas Nomes</b>. Sem eles a IA decide pela conversa e pode errar mais.</> },
   { sintoma: "Nada aparece em Envios recebidos", solucao: <>O fluxo não chegou no External Request. Confira se ele está publicado e se roda no fim do atendimento.</> },
