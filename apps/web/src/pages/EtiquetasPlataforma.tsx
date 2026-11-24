@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Search, Star, Upload } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, type EtiquetaPlataforma } from "../api";
 import { ehAdmin, useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
 import { Alerta, Botao, Cartao, Carregando, cx, Modal, Ponto, Selecao, Vazio } from "../components/ui";
 import { useChatbots, useEtiquetasPlataforma } from "../hooks";
-import { numero } from "../lib/formato";
+import { numero, PALETA } from "../lib/formato";
 
 /**
  * A plataforma manda só o número de cada etiqueta do contato (ex.: 583303).
@@ -247,13 +247,7 @@ function Linha({ e, pode }: { e: EtiquetaPlataforma; pode: boolean }) {
             <Star className={cx("size-3", e.destaque && "fill-current")} /> {e.destaque ? "Em destaque" : "Destacar"}
           </button>
           {e.destaque && pode && (
-            <input
-              type="color"
-              value={e.cor}
-              onChange={(ev) => salvar.mutate({ cor: ev.target.value })}
-              className="size-6 cursor-pointer rounded border border-line bg-transparent p-0"
-              aria-label="Cor do selo"
-            />
+            <CorDoSelo nome={e.nome || `#${e.idExterno}`} cor={e.cor} salvando={salvar.isPending} onEscolher={(cor) => salvar.mutate({ cor })} />
           )}
         </span>
       </td>
@@ -270,5 +264,65 @@ function Linha({ e, pode }: { e: EtiquetaPlataforma; pode: boolean }) {
         )}
       </td>
     </tr>
+  );
+}
+
+/** Cor do selo: clicar numa cor já salva (sem seletor do navegador, que não tem botão de salvar) */
+function CorDoSelo({ nome, cor, salvando, onEscolher }: { nome: string; cor: string; salvando: boolean; onEscolher: (c: string) => void }) {
+  const [aberto, setAberto] = useState(false);
+  const [atual, setAtual] = useState(cor);
+  const caixa = useRef<HTMLSpanElement>(null);
+  useEffect(() => setAtual(cor), [cor]);
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (ev: MouseEvent) => !caixa.current?.contains(ev.target as Node) && setAberto(false);
+    const esc = (ev: KeyboardEvent) => ev.key === "Escape" && setAberto(false);
+    document.addEventListener("mousedown", fora);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fora);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [aberto]);
+  return (
+    <span ref={caixa} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setAberto((a) => !a)}
+        className="size-6 cursor-pointer rounded-md border border-line"
+        style={{ backgroundColor: atual }}
+        aria-label="Cor do selo"
+        aria-expanded={aberto}
+        title="Cor do selo na lista de atendimentos"
+      />
+      {aberto && (
+        <span className="absolute top-8 left-0 z-20 grid w-52 gap-2 rounded-lg border border-line bg-surface p-3 shadow-lg">
+          <span className="text-xs text-muted">Cor do selo — clique para salvar</span>
+          <span className="flex flex-wrap gap-1.5">
+            {PALETA.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => {
+                  setAtual(c);
+                  if (c !== cor) onEscolher(c);
+                  setAberto(false);
+                }}
+                className={cx("size-7 cursor-pointer rounded-full border-2", atual === c ? "border-ink" : "border-transparent")}
+                style={{ backgroundColor: c }}
+                aria-label={`Cor ${c}`}
+              />
+            ))}
+          </span>
+          <span className="flex items-center gap-2 text-xs text-muted">
+            Na lista:
+            <span className="rounded-full px-1.5 text-[10px] font-semibold uppercase text-white" style={{ backgroundColor: atual }}>
+              {nome}
+            </span>
+            {salvando && "salvando…"}
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
