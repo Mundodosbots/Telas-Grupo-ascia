@@ -7,7 +7,7 @@ import { ehAdmin, useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
 import { Alerta, Botao, Cartao, Carregando, cx, Modal, Ponto, Selecao, Vazio } from "../components/ui";
 import { useChatbots, useEtiquetasPlataforma } from "../hooks";
-import { numero, PALETA } from "../lib/formato";
+import { numero } from "../lib/formato";
 
 /**
  * A plataforma manda só o número de cada etiqueta do contato (ex.: 583303).
@@ -247,7 +247,7 @@ function Linha({ e, pode }: { e: EtiquetaPlataforma; pode: boolean }) {
             <Star className={cx("size-3", e.destaque && "fill-current")} /> {e.destaque ? "Em destaque" : "Destacar"}
           </button>
           {e.destaque && pode && (
-            <CorDoSelo nome={e.nome || `#${e.idExterno}`} cor={e.cor} salvando={salvar.isPending} onEscolher={(cor) => salvar.mutate({ cor })} />
+            <CorDoSelo nome={e.nome || `#${e.idExterno}`} cor={e.cor} onSalvar={(cor) => salvar.mutateAsync({ cor })} />
           )}
         </span>
       </td>
@@ -267,59 +267,81 @@ function Linha({ e, pode }: { e: EtiquetaPlataforma; pode: boolean }) {
   );
 }
 
-/** Cor do selo: clicar numa cor já salva (sem seletor do navegador, que não tem botão de salvar) */
-function CorDoSelo({ nome, cor, salvando, onEscolher }: { nome: string; cor: string; salvando: boolean; onEscolher: (c: string) => void }) {
+/** Cor do selo: seletor RGB do navegador; a cor só vale depois de clicar em Salvar */
+function CorDoSelo({ nome, cor, onSalvar }: { nome: string; cor: string; onSalvar: (c: string) => Promise<unknown> }) {
   const [aberto, setAberto] = useState(false);
   const [atual, setAtual] = useState(cor);
+  const [estado, setEstado] = useState<"ocioso" | "salvando" | "salvo" | "erro">("ocioso");
   const caixa = useRef<HTMLSpanElement>(null);
   useEffect(() => setAtual(cor), [cor]);
   useEffect(() => {
     if (!aberto) return;
-    const fora = (ev: MouseEvent) => !caixa.current?.contains(ev.target as Node) && setAberto(false);
-    const esc = (ev: KeyboardEvent) => ev.key === "Escape" && setAberto(false);
+    const fora = (ev: MouseEvent) => !caixa.current?.contains(ev.target as Node) && fechar();
+    const esc = (ev: KeyboardEvent) => ev.key === "Escape" && fechar();
     document.addEventListener("mousedown", fora);
     document.addEventListener("keydown", esc);
     return () => {
       document.removeEventListener("mousedown", fora);
       document.removeEventListener("keydown", esc);
     };
-  }, [aberto]);
+  });
+  function fechar() {
+    setAberto(false);
+    setAtual(cor);
+    setEstado("ocioso");
+  }
+  async function salvar() {
+    setEstado("salvando");
+    try {
+      await onSalvar(atual.toLowerCase());
+      setEstado("salvo");
+      setTimeout(() => setAberto(false), 700);
+    } catch {
+      setEstado("erro");
+    }
+  }
+  const mudou = atual.toLowerCase() !== cor.toLowerCase();
   return (
     <span ref={caixa} className="relative inline-flex">
       <button
         type="button"
-        onClick={() => setAberto((a) => !a)}
+        onClick={() => (aberto ? fechar() : setAberto(true))}
         className="size-6 cursor-pointer rounded-md border border-line"
-        style={{ backgroundColor: atual }}
+        style={{ backgroundColor: cor }}
         aria-label="Cor do selo"
         aria-expanded={aberto}
         title="Cor do selo na lista de atendimentos"
       />
       {aberto && (
-        <span className="absolute top-8 left-0 z-20 grid w-52 gap-2 rounded-lg border border-line bg-surface p-3 shadow-lg">
-          <span className="text-xs text-muted">Cor do selo — clique para salvar</span>
-          <span className="flex flex-wrap gap-1.5">
-            {PALETA.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => {
-                  setAtual(c);
-                  if (c !== cor) onEscolher(c);
-                  setAberto(false);
-                }}
-                className={cx("size-7 cursor-pointer rounded-full border-2", atual === c ? "border-ink" : "border-transparent")}
-                style={{ backgroundColor: c }}
-                aria-label={`Cor ${c}`}
-              />
-            ))}
+        <span className="absolute top-8 right-0 z-20 grid w-60 gap-3 rounded-lg border border-line bg-surface p-3 shadow-lg">
+          <span className="text-xs text-muted">Cor do selo</span>
+          <span className="flex items-center gap-2">
+            <input
+              type="color"
+              value={atual}
+              onChange={(ev) => {
+                setAtual(ev.target.value);
+                setEstado("ocioso");
+              }}
+              className="h-9 w-14 cursor-pointer rounded border border-line bg-transparent p-0.5"
+              aria-label="Escolher cor"
+            />
+            <span className="font-mono text-xs text-ink-2 uppercase">{atual}</span>
           </span>
           <span className="flex items-center gap-2 text-xs text-muted">
             Na lista:
             <span className="rounded-full px-1.5 text-[10px] font-semibold uppercase text-white" style={{ backgroundColor: atual }}>
               {nome}
             </span>
-            {salvando && "salvando…"}
+          </span>
+          {estado === "erro" && <span className="text-xs text-bad">Não foi possível salvar. Tente de novo.</span>}
+          <span className="flex justify-end gap-2">
+            <Botao type="button" variante="fantasma" onClick={fechar}>
+              Cancelar
+            </Botao>
+            <Botao type="button" variante="primario" onClick={salvar} carregando={estado === "salvando"} disabled={!mudou && estado !== "salvo"}>
+              {estado === "salvo" ? "Salvo" : "Salvar"}
+            </Botao>
           </span>
         </span>
       )}
