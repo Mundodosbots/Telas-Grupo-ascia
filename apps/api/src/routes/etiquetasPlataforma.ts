@@ -67,10 +67,72 @@ export const rotasEtiquetasPlataforma = new Elysia({ prefix: "/api/etiquetas-pla
       .from(etiquetasPlataforma)
       .innerJoin(chatbots, eq(chatbots.id, etiquetasPlataforma.chatbotId))
       .where(eq(etiquetasPlataforma.empresaId, empresaId))
-      .orderBy(asc(chatbots.nome), sql`"etiquetas_plataforma"."nome" = ''`, asc(etiquetasPlataforma.nome), asc(etiquetasPlataforma.idExterno));
-    return itens;
+      .orderBy(asc(chatbots.nome), asc(etiquetasPlataforma.nome), asc(etiquetasPlataforma.idExterno));
+    // Em destaque primeiro, depois as que aparecem em mais atendimentos (as importadas e nunca vistas vão para o fim)
+    return itens.sort(
+      (a, b) => a.chatbotNome.localeCompare(b.chatbotNome) || Number(b.destaque) - Number(a.destaque) || b.atendimentos - a.atendimentos,
+    );
   })
   .use(protegido({ papel: "admin", empresa: true }))
+  /**
+   * Importa a lista de etiquetas exportada da plataforma ([{ "id": "706325", "name": "Grow" }, …]).
+   * Sem chatbotId, vale para todos os chatbots da empresa. Nomes existentes são atualizados;
+   * o destaque escolhido não muda (a etiqueta "Grow" já entra em destaque).
+   */
+  .post(
+    "/importar",
+    async ({ body, empresaId, set }) => {
+      const bots = await db
+        .select({ id: chatbots.id })
+        .from(chatbots)
+        .where(and(eq(chatbots.empresaId, empresaId), body.chatbotId ? eq(chatbots.id, body.chatbotId) : undefined));
+      if (!bots.length) {
+        set.status = 404;
+        return { erro: "Chatbot não encontrado" };
+      }
+      const itens = new Map<string, string>();
+      for (const i of body.itens) {
+        const id = String(i.id ?? "").trim();
+        const nome = String(i.name ?? i.nome ?? "").trim().slice(0, 80);
+        if (/^\w{1,40}$/.test(id) && nome) itens.set(id, nome);
+      }
+      if (!itens.size) {
+        set.status = 400;
+        return { erro: 'Nenhuma etiqueta reconhecida. O formato esperado é [{ "id": "706325", "name": "Grow" }, …]' };
+      }
+      const antes = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(etiquetasPlataforma)
+        .where(and(inArray(etiquetasPlataforma.chatbotId, bots.map((b) => b.id)), inArray(etiquetasPlataforma.idExterno, [...itens.keys()])));
+      const linhas = bots.flatMap((b) =>
+        [...itens].map(([idExterno, nome]) => ({ empresaId, chatbotId: b.id, idExterno, nome, destaque: nome.toLowerCase() === "grow" })),
+      );
+      for (let i = 0; i < linhas.length; i += 1000) {
+        await db
+          .insert(etiquetasPlataforma)
+          .values(linhas.slice(i, i + 1000))
+          .onConflictDoUpdate({
+            target: [etiquetasPlataforma.chatbotId, etiquetasPlataforma.idExterno],
+            set: {
+              nome: sql`excluded.nome`,
+              // Se o nome mudou, a etiqueta é outra coisa: o destaque antigo não vale mais
+              destaque: sql`case when ${etiquetasPlataforma.nome} in ('', excluded.nome) then ${etiquetasPlataforma.destaque} or lower(excluded.nome) = 'grow'
+                else lower(excluded.nome) = 'grow' end`,
+            },
+          });
+      }
+      const atualizadas = antes[0]?.n ?? 0;
+      return { importadas: itens.size, chatbots: bots.length, novas: linhas.length - atualizadas, atualizadas };
+    },
+    {
+      body: t.Object({
+        chatbotId: t.Optional(t.String({ format: "uuid" })),
+        itens: t.Array(t.Object({ id: t.Union([t.String(), t.Number()]), name: t.Optional(t.String()), nome: t.Optional(t.String()) }), {
+          maxItems: 10000,
+        }),
+      }),
+    },
+  )
   .patch(
     "/:id",
     async ({ params, body, empresaId, set }) => {

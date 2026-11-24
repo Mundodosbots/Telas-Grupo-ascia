@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Star } from "lucide-react";
+import { ChevronRight, Search, Star, Upload } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api, type EtiquetaPlataforma } from "../api";
 import { ehAdmin, useAuth } from "../auth";
 import { Titulo } from "../components/Layout";
-import { Alerta, Cartao, Carregando, cx, Ponto, Vazio } from "../components/ui";
-import { useEtiquetasPlataforma } from "../hooks";
+import { Alerta, Botao, Cartao, Carregando, cx, Modal, Ponto, Selecao, Vazio } from "../components/ui";
+import { useChatbots, useEtiquetasPlataforma } from "../hooks";
 import { numero } from "../lib/formato";
 
 /**
@@ -17,19 +17,36 @@ export function PaginaEtiquetasPlataforma() {
   const q = useEtiquetasPlataforma();
   const { usuario } = useAuth();
   const pode = ehAdmin(usuario);
-  const itens = q.data ?? [];
+  const [importando, setImportando] = useState(false);
+  const [busca, setBusca] = useState("");
+  const termo = busca.trim().toLowerCase();
+  const itens = (q.data ?? []).filter((e) => !termo || e.nome.toLowerCase().includes(termo) || e.idExterno.includes(termo));
   const porChatbot = [...new Set(itens.map((e) => e.chatbotId))].map((id) => itens.filter((e) => e.chatbotId === id));
 
   return (
     <>
       <Titulo
         titulo="Etiquetas da plataforma"
-        descricao="As etiquetas que o contato tem na plataforma (Grow, cidade, atendente…). O envio traz só o número de cada uma: dê o nome aqui e marque em destaque as que quer ver na lista de atendimentos."
+        descricao="As etiquetas que o contato tem na plataforma (Grow, cidade, atendente…). O envio traz só o número de cada uma: importe a lista de etiquetas da plataforma para o painel saber o nome de cada número, e marque em destaque as que quer ver na lista de atendimentos."
+        acoes={
+          pode && (
+            <Botao variante="primario" onClick={() => setImportando(true)}>
+              <Upload className="size-4" /> Importar etiquetas
+            </Botao>
+          )
+        }
       />
-      <Alerta tipo="info">
-        Para descobrir qual etiqueta é cada número, abra na plataforma um dos contatos de exemplo e veja as etiquetas dele. Uma etiqueta que aparece em
-        vários contatos diferentes fica fácil de achar. Depois de dar nome, o filtro “Etiqueta da plataforma” aparece na lista de atendimentos.
-      </Alerta>
+      {(q.data ?? []).length > 0 && (
+        <label className="relative block max-w-sm">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar etiqueta pelo nome ou número"
+            className="w-full rounded-lg border border-line bg-surface py-2 pr-3 pl-9 text-sm text-ink outline-none focus:border-accent"
+          />
+        </label>
+      )}
       <div className="mt-4 grid gap-4">
         {q.isLoading ? (
           <Cartao>
@@ -37,7 +54,9 @@ export function PaginaEtiquetasPlataforma() {
           </Cartao>
         ) : !itens.length ? (
           <Cartao>
-            <Vazio titulo="Nenhuma etiqueta recebida ainda">As etiquetas aparecem aqui quando chega um envio de contato que tem etiqueta na plataforma.</Vazio>
+            <Vazio titulo={termo ? "Nenhuma etiqueta com esse nome" : "Nenhuma etiqueta ainda"}>
+              {!termo && "Clique em Importar etiquetas e escolha o arquivo .json com a lista de etiquetas exportada da plataforma."}
+            </Vazio>
           </Cartao>
         ) : (
           porChatbot.map((lista) => (
@@ -66,7 +85,7 @@ export function PaginaEtiquetasPlataforma() {
                   </thead>
                   <tbody>
                     {lista.map((e) => (
-                      <Linha key={e.id} e={e} pode={pode} />
+                      <Linha key={`${e.id}:${e.nome}`} e={e} pode={pode} />
                     ))}
                   </tbody>
                 </table>
@@ -75,7 +94,106 @@ export function PaginaEtiquetasPlataforma() {
           ))
         )}
       </div>
+      {importando && <ImportarEtiquetas onFechar={() => setImportando(false)} />}
     </>
+  );
+}
+
+/** Lista exportada da plataforma: [{ "id": "706325", "name": "Grow" }, …], por arquivo ou colada */
+function ImportarEtiquetas({ onFechar }: { onFechar: () => void }) {
+  const qc = useQueryClient();
+  const chatbots = useChatbots();
+  const [chatbotId, setChatbotId] = useState("");
+  const [texto, setTexto] = useState("");
+  const [arquivo, setArquivo] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const importar = useMutation({
+    mutationFn: (itens: unknown[]) =>
+      api<{ importadas: number; chatbots: number; novas: number; atualizadas: number }>("/etiquetas-plataforma/importar", {
+        method: "POST",
+        body: { ...(chatbotId && { chatbotId }), itens },
+      }),
+    onSuccess: (r) => {
+      setOk(
+        `${r.importadas} etiquetas importadas${r.chatbots > 1 ? ` em ${r.chatbots} chatbots` : ""}: ${r.novas} novas e ${r.atualizadas} já existentes com o nome atualizado. ` +
+          `Para os atendimentos antigos usarem os nomes nas regras de origem, reprocesse os envios em Empresas.`,
+      );
+      for (const k of ["etiquetas-plataforma", "atendimentos"]) qc.invalidateQueries({ queryKey: [k] });
+    },
+    onError: (e) => setErro((e as Error).message),
+  });
+
+  function enviar() {
+    setErro(null);
+    setOk(null);
+    let dados: unknown;
+    try {
+      dados = JSON.parse(texto);
+    } catch {
+      return setErro("O conteúdo não é um JSON válido. Use o arquivo exatamente como a plataforma exportou.");
+    }
+    const lista = Array.isArray(dados) ? dados : Array.isArray((dados as { data?: unknown })?.data) ? (dados as { data: unknown[] }).data : null;
+    if (!lista?.length) return setErro('Não encontrei uma lista. O formato esperado é [{ "id": "706325", "name": "Grow" }, …]');
+    importar.mutate(lista);
+  }
+
+  return (
+    <Modal titulo="Importar etiquetas da plataforma" aberto onFechar={onFechar} largura="max-w-2xl">
+      <div className="grid gap-3">
+        <p className="text-sm text-ink-2">
+          Escolha o arquivo .json com a lista de etiquetas exportada da plataforma (ou cole o conteúdo). Pode importar de novo sempre que criar etiquetas
+          novas: as existentes só têm o nome atualizado, e o destaque que você escolheu continua. A etiqueta “Grow” já entra em destaque.
+        </p>
+        {erro && <Alerta>{erro}</Alerta>}
+        {ok && <Alerta tipo="ok">{ok}</Alerta>}
+        {(chatbots.data?.length ?? 0) > 1 && (
+          <Selecao rotulo="Vale para" value={chatbotId} onChange={(e) => setChatbotId(e.target.value)}>
+            <option value="">Todos os chatbots</option>
+            {chatbots.data!.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nome}
+              </option>
+            ))}
+          </Selecao>
+        )}
+        <input
+          type="file"
+          accept=".json,application/json"
+          aria-label="Arquivo de etiquetas"
+          className="text-sm text-ink-2 file:mr-3 file:cursor-pointer file:rounded-lg file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-sm file:text-ink"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            setTexto(await f.text());
+            setArquivo(f.name);
+            setOk(null);
+            setErro(null);
+          }}
+        />
+        <textarea
+          value={texto}
+          onChange={(e) => {
+            setTexto(e.target.value);
+            setArquivo(null);
+          }}
+          placeholder={'[\n  { "id": "706325", "name": "Grow" },\n  { "id": "717893", "name": "Sinop" }\n]'}
+          aria-label="Conteúdo do arquivo"
+          className="min-h-40 w-full rounded-lg border border-line bg-surface p-3 font-mono text-xs text-ink focus:border-accent focus:outline-none"
+        />
+        {arquivo && <p className="text-xs text-muted">Arquivo: {arquivo}</p>}
+        <div className="flex justify-end gap-2">
+          <Botao type="button" variante="fantasma" onClick={onFechar}>
+            {ok ? "Fechar" : "Cancelar"}
+          </Botao>
+          {!ok && (
+            <Botao variante="primario" onClick={enviar} carregando={importar.isPending} disabled={!texto.trim()}>
+              Importar
+            </Botao>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
