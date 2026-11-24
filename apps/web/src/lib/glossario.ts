@@ -52,6 +52,8 @@ export const GLOSSARIO = {
   anuncio: "Plataforma do anúncio que trouxe o cliente (Facebook, Instagram…), campo ADS Plataforma. \"Sem anúncio\" = não veio de anúncio.",
   fonte: "Fonte do contato informada pela plataforma (campo Fonte do contato).",
   interesse: "O que o cliente queria, segundo a IA que lê a conversa (modelo de carro, peça, revisão…).",
+  etiquetasPlataforma:
+    "Etiquetas que o contato tinha na plataforma quando este atendimento foi enviado (ex.: Grow). A plataforma manda só o número de cada etiqueta; o nome é dado em Cadastros → Etiquetas da plataforma.",
   etiquetas: "Etiquetas que a plataforma tinha no contato no fim do atendimento, e em quantos atendimentos cada uma apareceu.",
   horarios: "Em que dia da semana e hora os clientes mandam a 1ª mensagem. Quanto mais escuro, mais clientes chegando. Bom para montar a escala.",
   porHora: "Total de clientes chegando em cada hora do dia, somando todos os dias da semana.",

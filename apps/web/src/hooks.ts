@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router";
-import { api, type Atendente, type Chatbot, type ItemCadastro, type StatusSistema, type Time } from "./api";
+import { api, type Atendente, type Chatbot, type EtiquetaPlataforma, type ItemCadastro, type StatusSistema, type Time } from "./api";
 import { useAuth } from "./auth";
 import { diasAtras, isoDia } from "./lib/formato";
 
@@ -16,6 +16,7 @@ export const useTimes = () => useDaEmpresa<Time[]>("times", "/times");
 export const useOrigens = () => useDaEmpresa<ItemCadastro[]>("origens", "/origens");
 export const useDepartamentos = () => useDaEmpresa<ItemCadastro[]>("departamentos", "/departamentos");
 export const useEtiquetas = () => useDaEmpresa<ItemCadastro[]>("etiquetas", "/etiquetas");
+export const useEtiquetasPlataforma = () => useDaEmpresa<EtiquetaPlataforma[]>("etiquetas-plataforma", "/etiquetas-plataforma");
 
 export function useStatus() {
   const { empresa } = useAuth();
@@ -78,6 +79,8 @@ const FILTROS_URL = {
   origem: "origem_id",
   departamento: "departamento_id",
   etiqueta: "etiqueta_id",
+  plataforma: "etiqueta_plataforma",
+  anuncio: "anuncio",
   canal: "canal",
   fonte: "fonte",
   cidade: "cidade",
@@ -94,7 +97,7 @@ const FILTROS_URL = {
 } as const;
 
 /** Parâmetros de "recorte" (vêm de um clique no painel); a lista mostra cada um como um chip removível */
-export const RECORTES = ["situacao", "faixa_humano", "faixa_resposta", "dia_semana", "hora", "interesse", "anuncio", "novo", "canal", "fonte", "etiqueta"] as const;
+export const RECORTES = ["situacao", "faixa_humano", "faixa_resposta", "dia_semana", "hora", "interesse", "anuncio", "novo", "canal", "fonte", "etiqueta", "plataforma"] as const;
 
 /**
  * Link para a lista de atendimentos mantendo os filtros da tela atual (período, chatbot…) e somando o recorte.

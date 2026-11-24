@@ -14,7 +14,6 @@ export const ORIGENS_PADRAO: Item[] = [
     descricao: "Veio de anúncio (fonte Ads, 'vi o anúncio', clique em anúncio) mas não dá para saber se foi Instagram ou Facebook.",
     cor: "#eda100",
   },
-  { nome: "RPA Grow", descricao: "Contato enviado pela integração do Grow (etiqueta Grow, mensagens de API do Grow).", cor: "#6250d6" },
   { nome: "Google", descricao: "Pesquisa ou anúncio no Google, Google Maps, Perfil da Empresa no Google.", cor: "#1baf7a" },
   { nome: "Portal de veículos", descricao: "Webmotors, OLX, iCarros, Mobiauto e outros classificados.", cor: "#b3741b" },
   { nome: "Site da empresa", descricao: "Botão de WhatsApp ou formulário do site da empresa.", cor: "#0f8a8a" },
@@ -61,9 +60,9 @@ export async function semearEmpresa(empresaId: string) {
   await db.insert(departamentos).values(DEPARTAMENTOS_PADRAO.map((d) => ({ ...d, empresaId })));
   await db.insert(etiquetas).values(ETIQUETAS_PADRAO.map((e) => ({ ...e, empresaId })));
   const id = (nome: string) => criadas.find((o) => o.nome === nome)!.id;
-  // Ordem: etiqueta Grow → plataforma do anúncio → clique em anúncio no texto → fonte Ads
+  // Ordem: plataforma do anúncio → clique em anúncio no texto → fonte Ads
+  // (Grow não é origem: é uma etiqueta da plataforma, marcada em destaque em Etiquetas da plataforma)
   await db.insert(regrasOrigem).values([
-    { empresaId, campo: "etiqueta", comparacao: "igual", valor: "Grow", origemId: id("RPA Grow"), prioridade: 10 },
     { empresaId, campo: "anuncio", comparacao: "igual", valor: "Instagram", origemId: id("Anúncio Instagram"), prioridade: 20 },
     { empresaId, campo: "anuncio", comparacao: "igual", valor: "Facebook", origemId: id("Anúncio Facebook"), prioridade: 30 },
     { empresaId, campo: "texto", comparacao: "contem", valor: "ADS_CLICKED", origemId: id("Anúncio (plataforma não identificada)"), prioridade: 40 },

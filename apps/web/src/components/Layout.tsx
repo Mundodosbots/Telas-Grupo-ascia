@@ -42,6 +42,7 @@ const SECOES: { titulo?: string; itens: Item[] }[] = [
       { para: "/origens", rotulo: "Origens", Icone: Waypoints },
       { para: "/regras", rotulo: "Regras de origem", Icone: GitBranch },
       { para: "/etiquetas", rotulo: "Etiquetas", Icone: Tags },
+      { para: "/etiquetas-plataforma", rotulo: "Etiquetas da plataforma", Icone: Tags },
     ],
   },
   {

@@ -105,7 +105,7 @@ function FormEmpresa({ onFechar }: { onFechar: () => void }) {
         <Campo rotulo="Nome" required value={admin.nome} onChange={(e) => setAdmin({ ...admin, nome: e.target.value })} />
         <Campo rotulo="E-mail" type="email" required value={admin.email} onChange={(e) => setAdmin({ ...admin, email: e.target.value })} />
         <Campo rotulo="Senha inicial" type="password" required minLength={8} value={admin.senha} onChange={(e) => setAdmin({ ...admin, senha: e.target.value })} ajuda="Mínimo 8 caracteres. A pessoa troca em Minha senha." />
-        <p className="text-xs text-muted">A empresa já nasce com origens, departamentos, etiquetas e regras padrão (Grow, anúncio Instagram/Facebook, fonte Ads).</p>
+        <p className="text-xs text-muted">A empresa já nasce com origens, departamentos, etiquetas e regras padrão (anúncio Instagram/Facebook, fonte Ads).</p>
         <div className="flex justify-end gap-2">
           <Botao type="button" variante="fantasma" onClick={onFechar}>
             Cancelar

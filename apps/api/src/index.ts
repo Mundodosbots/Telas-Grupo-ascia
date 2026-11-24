@@ -11,6 +11,7 @@ import { rotasDepartamentos, rotasEtiquetas, rotasOrigens, rotasTimes } from "./
 import { rotasChatbots } from "./routes/chatbots";
 import { rotasDashboard } from "./routes/dashboard";
 import { rotasEmpresas } from "./routes/empresas";
+import { rotasEtiquetasPlataforma } from "./routes/etiquetasPlataforma";
 import { rotasEventos } from "./routes/eventos";
 import { rotasRegras } from "./routes/regras";
 import { rotasUsuarios } from "./routes/usuarios";
@@ -53,6 +54,7 @@ const app = new Elysia()
   .use(rotasOrigens)
   .use(rotasDepartamentos)
   .use(rotasEtiquetas)
+  .use(rotasEtiquetasPlataforma)
   .use(rotasRegras)
   .use(rotasAtendimentos)
   .use(rotasDashboard)

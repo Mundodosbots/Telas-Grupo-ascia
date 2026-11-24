@@ -11,6 +11,7 @@ import {
   atendimentoAtendentes,
   atendimentos,
   contatos,
+  etiquetasPlataforma,
   mensagens,
   webhookEventos,
   type Atendente,
@@ -177,6 +178,10 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
   const etiquetasNomes = nomesEtiquetas
     ? nomesEtiquetas.split(/\s*,\s*/).filter(Boolean)
     : (Array.isArray(p.tags) ? p.tags : []).map((t: any) => `#${t?.id ?? t}`).filter((x: string) => x !== "#undefined");
+  /** Números das etiquetas que vieram no envio (a plataforma não manda o nome) */
+  const idsEtiquetas: string[] = [
+    ...new Set<string>((Array.isArray(p.tags) ? p.tags : []).map((t: any) => String(t?.id ?? t ?? "").trim()).filter((x: string) => /^\w+$/.test(x))),
+  ];
   const anuncio: DadosAnuncio = {
     titulo: campo("ADS Titulo"),
     texto: campo("ADS Texto"),
@@ -220,6 +225,27 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
       .values({ empresaId: chatbot.empresaId, chatbotId: chatbot.id, idExterno, ...dadosContato })
       .onConflictDoUpdate({ target: [contatos.chatbotId, contatos.idExterno], set: dadosContato })
       .returning();
+
+    // ---------- etiquetas da plataforma ----------
+    // Cada número novo entra na lista (sem nome) para alguém dar nome em Cadastros → Etiquetas da plataforma
+    if (idsEtiquetas.length) {
+      await tx
+        .insert(etiquetasPlataforma)
+        .values(idsEtiquetas.map((idExterno) => ({ empresaId: chatbot.empresaId, chatbotId: chatbot.id, idExterno })))
+        .onConflictDoNothing();
+    }
+    const nomesDasEtiquetas = idsEtiquetas.length
+      ? (
+          await tx
+            .select({ nome: etiquetasPlataforma.nome })
+            .from(etiquetasPlataforma)
+            .where(and(eq(etiquetasPlataforma.chatbotId, chatbot.id), inArray(etiquetasPlataforma.idExterno, idsEtiquetas)))
+        )
+          .map((e) => e.nome.trim())
+          .filter(Boolean)
+      : [];
+    // As regras de origem enxergam o número ("#583303") e o nome dado no painel ("Grow")
+    const etiquetasRegras = [...etiquetasNomes, ...nomesDasEtiquetas];
 
     // ---------- atendentes ----------
     const equipe = await tx.select().from(atendentes).where(eq(atendentes.empresaId, chatbot.empresaId));
@@ -320,7 +346,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
       const textoRegras = ultima ? [todas.map((m) => m.texto).join("\n"), ...Object.values(anuncio).filter(Boolean)].join("\n") : "";
       const regra =
         ultima && existente?.classificacaoStatus !== "manual"
-          ? await aplicarRegras(tx, chatbot.empresaId, { etiquetas: etiquetasNomes, fonte, canal, anuncioPlataforma: anuncio.plataforma, texto: textoRegras })
+          ? await aplicarRegras(tx, chatbot.empresaId, { etiquetas: etiquetasRegras, fonte, canal, anuncioPlataforma: anuncio.plataforma, texto: textoRegras })
           : null;
       if (ultima && regra) origemRegra = regra.descricao;
 
@@ -364,6 +390,7 @@ export async function ingerirEnvio(chatbot: Chatbot, payload: unknown, tamanhoBy
           dadosContato.criadoNaPlataformaEm.getTime() >= t.inicioEm.getTime() - 2 * 3600_000 &&
           dadosContato.criadoNaPlataformaEm.getTime() <= t.ultimaMsgEm.getTime(),
         ...(ultima && {
+          etiquetasPlataforma: idsEtiquetas,
           fonte,
           canal,
           refEntrada: campo("Ref Entrada") ?? null,

@@ -9,7 +9,7 @@ import { useOrigens } from "../hooks";
 import { numero } from "../lib/formato";
 
 const CAMPOS: Record<Regra["campo"], { nome: string; rotulo: string; exemplo: string }> = {
-  etiqueta: { nome: "a etiqueta da plataforma", rotulo: "Nome da etiqueta", exemplo: "Grow" },
+  etiqueta: { nome: "a etiqueta da plataforma", rotulo: "Nome ou número da etiqueta", exemplo: "Instagram" },
   anuncio: { nome: "a plataforma do anúncio (ADS Plataforma)", rotulo: "Plataforma", exemplo: "Instagram" },
   fonte: { nome: "a fonte do contato", rotulo: "Fonte", exemplo: "Ads" },
   canal: { nome: "o canal da conversa", rotulo: "Canal", exemplo: "Instagram" },
@@ -58,7 +58,7 @@ export function PaginaRegras() {
         {q.isLoading ? (
           <Carregando />
         ) : !lista.length ? (
-          <Vazio titulo="Nenhuma regra">Crie uma regra como “etiqueta Grow → RPA Grow”.</Vazio>
+          <Vazio titulo="Nenhuma regra">Crie uma regra como “plataforma do anúncio = Instagram → Anúncio Instagram”.</Vazio>
         ) : (
           <ol className="-mx-4 divide-y divide-line">
             {lista.map((r, i) => (

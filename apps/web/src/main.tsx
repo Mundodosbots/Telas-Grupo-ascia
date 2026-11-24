@@ -10,6 +10,7 @@ import { PaginaAtendentes } from "./pages/Atendentes";
 import { PaginaAtendimento } from "./pages/Atendimento";
 import { PaginaAtendimentos } from "./pages/Atendimentos";
 import { PaginaCadastro } from "./pages/Cadastro";
+import { PaginaEtiquetasPlataforma } from "./pages/EtiquetasPlataforma";
 import { PaginaChatbots } from "./pages/Chatbots";
 import { PaginaConta } from "./pages/Conta";
 import { PaginaDashboard } from "./pages/Dashboard";
@@ -52,6 +53,7 @@ function App() {
             <Route path="departamentos" element={<PaginaCadastro tipo="departamentos" />} />
             <Route path="origens" element={<PaginaCadastro tipo="origens" />} />
             <Route path="etiquetas" element={<PaginaCadastro tipo="etiquetas" />} />
+            <Route path="etiquetas-plataforma" element={<PaginaEtiquetasPlataforma />} />
             <Route path="regras" element={<PaginaRegras />} />
             <Route path="eventos" element={<PaginaEventos />} />
             <Route path="usuarios" element={ehAdmin(usuario) ? <PaginaUsuarios /> : <Navigate to="/" />} />

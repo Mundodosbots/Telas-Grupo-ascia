@@ -12,6 +12,8 @@ export type FiltroAtendimentos = {
   /** uuid, ou "nenhum" para sem departamento */
   departamento_id?: string;
   etiqueta_id?: string;
+  /** Etiqueta da plataforma (id da tabela etiquetas_plataforma): o contato tinha a etiqueta neste atendimento */
+  etiqueta_plataforma?: string;
   canal?: string;
   fonte?: string;
   cidade?: string;
@@ -74,6 +76,9 @@ export function condicoesAtendimentos(empresaId: string, f: FiltroAtendimentos):
   else if (ehUuid(f.departamento_id)) c.push(eq(atendimentos.departamentoId, f.departamento_id));
   if (ehUuid(f.etiqueta_id))
     c.push(sql`exists (select 1 from atendimento_etiquetas ae where ae.atendimento_id = ${atendimentos.id} and ae.etiqueta_id = ${f.etiqueta_id})`);
+  if (ehUuid(f.etiqueta_plataforma))
+    c.push(sql`exists (select 1 from etiquetas_plataforma ep where ep.id = ${f.etiqueta_plataforma}
+      and ep.chatbot_id = ${atendimentos.chatbotId} and ep.id_externo = any(${atendimentos.etiquetasPlataforma}))`);
   if (f.canal) c.push(sql`lower(coalesce(${atendimentos.canal}, '')) = lower(${f.canal})`);
   if (f.fonte) c.push(sql`lower(coalesce(${atendimentos.fonte}, '')) = lower(${f.fonte})`);
   if (f.cidade) c.push(sql`lower(coalesce(${atendimentos.cidade}, '')) = lower(${f.cidade})`);

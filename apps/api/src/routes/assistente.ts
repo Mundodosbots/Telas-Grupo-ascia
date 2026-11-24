@@ -8,7 +8,7 @@ import { Elysia, t } from "elysia";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { db } from "../db/client";
-import { atendentes, atendimentos, chatbots, contatos, departamentos, origens, times } from "../db/schema";
+import { atendentes, atendimentos, chatbots, contatos, departamentos, etiquetasPlataforma, origens, times } from "../db/schema";
 import { env } from "../env";
 import { protegido } from "../lib/auth";
 import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
@@ -29,6 +29,10 @@ const FILTROS_PARAMS = {
   canal: { type: "string", description: "Canal (WhatsApp, Instagram...)" },
   cidade: { type: "string", description: "Cidade" },
   fonte: { type: "string", description: "Fonte do contato (Ads, Inbound Message...)" },
+  etiqueta_plataforma: {
+    type: "string",
+    description: "Nome de uma etiqueta que o contato tinha na plataforma naquele atendimento (ex.: Grow = veio pelo Grow). Grow NÃO é origem: use este filtro.",
+  },
 } as const;
 
 const FERRAMENTAS: ChatCompletionTool[] = [
@@ -69,7 +73,7 @@ type Filtros = Partial<Record<keyof typeof FILTROS_PARAMS, string>>;
 
 /** Nomes → ids (busca sem diferença de maiúsculas) dentro da empresa */
 async function resolverFiltros(empresaId: string, f: Filtros): Promise<FiltroAtendimentos> {
-  const achar = async (tab: typeof chatbots | typeof atendentes | typeof departamentos | typeof origens | typeof times, nome?: string) => {
+  const achar = async (tab: typeof chatbots | typeof atendentes | typeof departamentos | typeof origens | typeof times | typeof etiquetasPlataforma, nome?: string) => {
     if (!nome) return undefined;
     const [x] = await db
       .select({ id: tab.id })
@@ -86,6 +90,7 @@ async function resolverFiltros(empresaId: string, f: Filtros): Promise<FiltroAte
     time_id: await achar(times, f.time),
     departamento_id: await achar(departamentos, f.departamento),
     origem_id: await achar(origens, f.origem),
+    etiqueta_plataforma: await achar(etiquetasPlataforma, f.etiqueta_plataforma),
     canal: f.canal,
     cidade: f.cidade,
     fonte: f.fonte,

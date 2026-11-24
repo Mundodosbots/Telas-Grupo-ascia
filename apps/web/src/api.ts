@@ -95,6 +95,21 @@ export type Atendente = {
 
 export type StatusClassificacao = "pendente" | "processando" | "classificado" | "erro" | "manual";
 export type EtiquetaMini = { id: string; nome: string; cor: string };
+/** Etiqueta da plataforma no atendimento (sem nome dado no painel: nome = "#583303") */
+export type EtiquetaPlataformaMini = { id: string; idExterno: string; nome: string; cor: string; destaque: boolean };
+export type EtiquetaPlataforma = {
+  id: string;
+  chatbotId: string;
+  chatbotNome: string;
+  chatbotCor: string;
+  idExterno: string;
+  nome: string;
+  cor: string;
+  destaque: boolean;
+  atendimentos: number;
+  contatos: number;
+  exemplos: string[];
+};
 
 export type AtendimentoItem = {
   id: string;
@@ -132,6 +147,7 @@ export type AtendimentoItem = {
   iniciadoPelaEmpresa: boolean;
   status: StatusClassificacao;
   etiquetas: EtiquetaMini[];
+  plataforma: EtiquetaPlataformaMini[];
 };
 export type Pagina<T> = { total: number; pagina: number; porPagina: number; itens: T[] };
 
@@ -231,6 +247,7 @@ export type AtendimentoDetalhe = {
   classificacaoErro: string | null;
   classificadoPor: string | null;
   etiquetas: EtiquetaMini[];
+  plataforma: EtiquetaPlataformaMini[];
   humanos: { atendenteId: string; nome: string; ordem: number; primeiraMsgEm: string; mensagens: number }[];
   conversa: MensagemConversa[];
   outros: { id: string; protocolo: string | null; inicioEm: string; origemNome: string | null; atendenteNome: string | null }[];
@@ -314,7 +331,7 @@ export type Evento = {
   recebidoEm: string;
 };
 
-export type ListaRelatorio = { total: number; limite: number; itens: (Omit<AtendimentoItem, "etiquetas"> & { etiquetas: string[] })[] };
+export type ListaRelatorio = { total: number; limite: number; itens: (Omit<AtendimentoItem, "etiquetas" | "plataforma"> & { etiquetas: string[]; etiquetasPlataforma: string[] })[] };
 
 export type Grafico = { tipo: "barras" | "linha" | "pizza"; titulo: string; unidade: string; dados: { rotulo: string; valor: number }[] };
 export type RespostaAssistente = { texto: string; grafico: Grafico | null };

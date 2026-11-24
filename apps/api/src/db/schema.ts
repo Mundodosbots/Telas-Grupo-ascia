@@ -160,6 +160,30 @@ export const departamentos = cadastro("departamentos");
 export const etiquetas = cadastro("etiquetas");
 
 /**
+ * Etiquetas da plataforma: o envio só traz o número de cada etiqueta, o nome é dado aqui.
+ * destaque = aparece em evidência na lista de atendimentos (ex.: Grow, para saber quem veio por ele).
+ */
+export const etiquetasPlataforma = pgTable(
+  "etiquetas_plataforma",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    empresaId: uuid("empresa_id")
+      .notNull()
+      .references(() => empresas.id, { onDelete: "cascade" }),
+    chatbotId: uuid("chatbot_id")
+      .notNull()
+      .references(() => chatbots.id, { onDelete: "cascade" }),
+    /** número da etiqueta na plataforma */
+    idExterno: text("id_externo").notNull(),
+    nome: text("nome").notNull().default(""),
+    cor: text("cor").notNull().default("#6250d6"),
+    destaque: boolean("destaque").notNull().default(false),
+    criadoEm: criadoEm(),
+  },
+  (t) => [uniqueIndex("etiquetas_plataforma_chatbot_uq").on(t.chatbotId, t.idExterno), index("etiquetas_plataforma_empresa_idx").on(t.empresaId)],
+);
+
+/**
  * Regras fixas de origem, avaliadas antes da IA, em ordem de prioridade (menor primeiro).
  * campo: etiqueta (da plataforma) · fonte · canal · anuncio (ADS Plataforma) · texto (histórico e campos)
  */
@@ -282,6 +306,8 @@ export const atendimentos = pgTable(
     /** A conversa foi puxada pelo atendente (contato ativo): sem tempo de robô até o humano */
     iniciadoPelaEmpresa: boolean("iniciado_pela_empresa").notNull().default(false),
     leadNovo: boolean("lead_novo").notNull().default(false),
+    /** Números das etiquetas da plataforma que o contato tinha quando este atendimento foi enviado (ex.: "583303") */
+    etiquetasPlataforma: text("etiquetas_plataforma").array().notNull().default(sql`'{}'::text[]`),
 
     fonte: text("fonte"),
     canal: text("canal"),

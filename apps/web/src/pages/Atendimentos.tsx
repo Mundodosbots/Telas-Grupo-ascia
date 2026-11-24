@@ -6,7 +6,7 @@ import { useAuth } from "../auth";
 import { BarraFiltros } from "../components/Filtros";
 import { Titulo } from "../components/Layout";
 import { Alerta, Cartao, Carregando, Chip, cx, Dica, Paginacao, Ponto, Selecao, Vazio } from "../components/ui";
-import { useEtiquetas, useFiltros } from "../hooks";
+import { useEtiquetas, useEtiquetasPlataforma, useFiltros } from "../hooks";
 import { dataHora, duracao, numero, telefone } from "../lib/formato";
 import { DIAS_SEMANA, FAIXAS, GLOSSARIO, ORDENS, SITUACOES } from "../lib/glossario";
 
@@ -39,7 +39,7 @@ export function PaginaAtendimentos() {
   return (
     <>
       <Titulo titulo="Atendimentos" descricao="Cada linha é um atendimento (um protocolo). Clique para abrir a conversa, os tempos e de onde o cliente veio." />
-      <BarraFiltros extras={["atendente", "departamento", "origem", "etiqueta", "cidade", "busca", "humano"]} />
+      <BarraFiltros extras={["atendente", "departamento", "origem", "etiqueta", "plataforma", "cidade", "busca", "humano"]} />
       <Recortes />
       <Cartao>
         {lista.error ? (
@@ -84,6 +84,18 @@ export function PaginaAtendimentos() {
                         <p className="flex items-center gap-1.5 font-medium text-ink">
                           {a.contatoNome || "Sem nome"}
                           {a.leadNovo && <span className="rounded-full bg-good-soft px-1.5 text-[10px] font-semibold text-good">NOVO</span>}
+                          {a.plataforma
+                            .filter((e) => e.destaque)
+                            .map((e) => (
+                              <span
+                                key={e.idExterno}
+                                className="rounded-full px-1.5 text-[10px] font-semibold uppercase text-white"
+                                style={{ backgroundColor: e.cor }}
+                                title={`O contato tinha a etiqueta "${e.nome}" na plataforma neste atendimento`}
+                              >
+                                {e.nome}
+                              </span>
+                            ))}
                           {a.historicoIncompleto && (
                             <span className="rounded-full bg-warn-soft px-1.5 text-[10px] font-semibold text-warn" title="Faltou um trecho da conversa no envio: tempos parciais">
                               INCOMPLETO
@@ -158,6 +170,7 @@ function Cab({ children, dica }: { children: string; dica: string }) {
 function Recortes() {
   const { filtros, definir } = useFiltros();
   const etiquetas = useEtiquetas();
+  const plataforma = useEtiquetasPlataforma();
   const chips: { chave: string; texto: string; dica?: string }[] = [];
   const sit = SITUACOES.find((s) => s.id === filtros.situacao);
   if (sit) chips.push({ chave: "situacao", texto: sit.rotulo, dica: sit.dica });
@@ -171,6 +184,12 @@ function Recortes() {
   if (filtros.canal) chips.push({ chave: "canal", texto: `Canal: ${filtros.canal}` });
   if (filtros.fonte) chips.push({ chave: "fonte", texto: `Fonte: ${filtros.fonte}` });
   if (filtros.etiqueta_id) chips.push({ chave: "etiqueta", texto: `Etiqueta: ${etiquetas.data?.find((e) => e.id === filtros.etiqueta_id)?.nome ?? "…"}` });
+  if (filtros.etiqueta_plataforma)
+    chips.push({
+      chave: "plataforma",
+      texto: `Etiqueta da plataforma: ${plataforma.data?.find((e) => e.id === filtros.etiqueta_plataforma)?.nome || "…"}`,
+      dica: GLOSSARIO.etiquetasPlataforma,
+    });
   if (!chips.length) return null;
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-accent/30 bg-accent-soft px-3 py-2 text-sm">

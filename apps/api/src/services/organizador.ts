@@ -6,7 +6,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { db } from "../db/client";
-import { atendentes, atendimentoEtiquetas, atendimentos, chatbots, contatos, departamentos, etiquetas, mensagens, origens } from "../db/schema";
+import { atendentes, atendimentoEtiquetas, atendimentos, chatbots, contatos, departamentos, etiquetas, etiquetasPlataforma, mensagens, origens } from "../db/schema";
 import { env } from "../env";
 import { contato as fmtContato, registrar } from "../lib/log";
 
@@ -88,6 +88,20 @@ export async function organizarAtendimento(id: string): Promise<void> {
     .map(([k, v]) => `- ${k}: ${v}`)
     .join("\n")
     .slice(0, 5000);
+  // Etiquetas da plataforma que o contato tinha neste atendimento, com o nome dado no painel
+  const nomesEtq = at.etiquetasPlataforma.length
+    ? new Map(
+        (
+          await db
+            .select({ id: etiquetasPlataforma.idExterno, nome: etiquetasPlataforma.nome })
+            .from(etiquetasPlataforma)
+            .where(and(eq(etiquetasPlataforma.chatbotId, at.chatbotId), inArray(etiquetasPlataforma.idExterno, at.etiquetasPlataforma)))
+        ).map((e) => [e.id, e.nome.trim()]),
+      )
+    : new Map<string, string>();
+  const etiquetasTexto = at.etiquetasPlataforma.length
+    ? at.etiquetasPlataforma.map((x) => nomesEtq.get(x) || `#${x}`).join(", ")
+    : contato.etiquetas.join(", ");
   const origemFixa = at.origemRegraId && at.origemId ? listaOrigens.find((o) => o.id === at.origemId) : undefined;
 
   const entrada = `CHATBOT: ${a.chatbotNome}
@@ -95,7 +109,7 @@ CONTATO: ${contato.nome}${contato.cidade ? ` (cidade cadastrada: ${contato.cidad
 ATENDENTE: ${a.atendenteNome ?? "(nenhum)"}
 FONTE DO CONTATO: ${at.fonte ?? "(não informada)"} | CANAL: ${at.canal ?? "(não informado)"} | REF ENTRADA: ${at.refEntrada ?? "-"}
 ANÚNCIO: ${at.anuncio ? JSON.stringify(at.anuncio) : "(nenhum)"}
-ETIQUETAS DA PLATAFORMA: ${contato.etiquetas.join(", ") || "(nenhuma)"}
+ETIQUETAS DA PLATAFORMA: ${etiquetasTexto || "(nenhuma)"}
 ${origemFixa ? `\nORIGEM JÁ DEFINIDA POR REGRA: ${origemFixa.nome}. Use esse código e foque nos outros itens.\n` : ""}
 OUTROS CAMPOS DO CONTATO:
 ${campos || "(nenhum)"}

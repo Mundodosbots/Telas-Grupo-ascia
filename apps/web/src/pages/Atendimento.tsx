@@ -238,14 +238,23 @@ export function PaginaAtendimento() {
                   {a.anuncio.texto && <p className="mt-1 rounded-md bg-surface-2 p-2 text-xs text-ink-2 whitespace-pre-line">{a.anuncio.texto}</p>}
                 </>
               )}
-              {a.contato.etiquetas.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {a.contato.etiquetas.map((e) => (
-                    <span key={e} className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-ink-2">
-                      {e}
-                    </span>
-                  ))}
-                </div>
+              {a.plataforma.length > 0 && (
+                <Linha rotulo="Etiquetas">
+                  <span className="flex flex-wrap items-center gap-1">
+                    {a.plataforma.map((e) =>
+                      e.id && !e.nome.startsWith("#") ? (
+                        <Link key={e.idExterno} to={`/atendimentos?plataforma=${e.id}&periodo=tudo`} title="Ver todos os atendimentos com esta etiqueta">
+                          <Chip cor={e.cor}>{e.destaque ? <strong>{e.nome}</strong> : e.nome}</Chip>
+                        </Link>
+                      ) : (
+                        <span key={e.idExterno} className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-muted" title="Etiqueta sem nome: dê um nome em Etiquetas da plataforma">
+                          {e.nome}
+                        </span>
+                      ),
+                    )}
+                    <Dica texto={GLOSSARIO.etiquetasPlataforma} />
+                  </span>
+                </Linha>
               )}
             </dl>
           </Cartao>

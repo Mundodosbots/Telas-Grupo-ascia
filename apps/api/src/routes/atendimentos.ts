@@ -18,6 +18,7 @@ import {
 import { protegido } from "../lib/auth";
 import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
 import { marcarEsperas } from "../services/historico";
+import { etiquetasPlataformaDe } from "./etiquetasPlataforma";
 import { reorganizar } from "../services/organizador";
 
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
@@ -81,6 +82,7 @@ const colunasLista = {
   leadNovo: atendimentos.leadNovo,
   historicoIncompleto: atendimentos.historicoIncompleto,
   iniciadoPelaEmpresa: atendimentos.iniciadoPelaEmpresa,
+  etiquetasPlataforma: atendimentos.etiquetasPlataforma,
   status: atendimentos.classificacaoStatus,
 };
 
@@ -108,16 +110,20 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
       .orderBy(...ordemDe(f.ordem))
       .limit(porPagina)
       .offset((pagina - 1) * porPagina);
-    const tags = await etiquetasDe(itens.map((i) => i.id));
-    return { total, pagina, porPagina, itens: itens.map((i) => ({ ...i, etiquetas: tags.get(i.id) ?? [] })) };
+    const [tags, plataforma] = await Promise.all([etiquetasDe(itens.map((i) => i.id)), etiquetasPlataformaDe(itens)]);
+    return { total, pagina, porPagina, itens: itens.map((i) => ({ ...i, etiquetas: tags.get(i.id) ?? [], plataforma: plataforma.get(i.id) ?? [] })) };
   })
   /** Lista completa (sem paginação) para relatórios e planilha */
   .get("/relatorio", async ({ query, empresaId }) => {
     const onde = and(...condicoesAtendimentos(empresaId, query as FiltroAtendimentos));
     const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(onde)) as [{ total: number }];
     const itens = await consultaLista(onde).orderBy(...ordemDe((query as { ordem?: string }).ordem)).limit(LIMITE_RELATORIO);
-    const tags = await etiquetasDe(itens.map((i) => i.id));
-    return { total, limite: LIMITE_RELATORIO, itens: itens.map((i) => ({ ...i, etiquetas: (tags.get(i.id) ?? []).map((e) => e.nome) })) };
+    const [tags, plataforma] = await Promise.all([etiquetasDe(itens.map((i) => i.id)), etiquetasPlataformaDe(itens)]);
+    return {
+      total,
+      limite: LIMITE_RELATORIO,
+      itens: itens.map((i) => ({ ...i, etiquetas: (tags.get(i.id) ?? []).map((e) => e.nome), etiquetasPlataforma: (plataforma.get(i.id) ?? []).map((e) => e.nome) })),
+    };
   })
   .get(
     "/:id",
@@ -170,7 +176,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         .where(and(eq(atendimentos.contatoId, a.at.contatoId), sql`${atendimentos.id} <> ${params.id}`))
         .orderBy(desc(atendimentos.inicioEm))
         .limit(20);
-      const tags = await etiquetasDe([params.id]);
+      const [tags, plataforma] = await Promise.all([etiquetasDe([params.id]), etiquetasPlataformaDe([a.at])]);
       return {
         ...a.at,
         contato: { id: a.contato.id, nome: a.contato.nome, telefone: a.contato.telefone, cidade: a.contato.cidade, linkConversa: a.contato.linkConversa, criadoNaPlataformaEm: a.contato.criadoNaPlataformaEm, etiquetas: a.contato.etiquetas, campos: a.contato.campos },
@@ -185,6 +191,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         departamentoCor: a.departamentoCor,
         classificadoPor: a.classificadoPor,
         etiquetas: tags.get(params.id) ?? [],
+        plataforma: plataforma.get(params.id) ?? [],
         humanos,
         conversa: marcarEsperas(conversa, a.horario, a.fuso),
         outros,

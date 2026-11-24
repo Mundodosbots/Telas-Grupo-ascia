@@ -12,7 +12,7 @@ const ESSENCIAIS: CampoPlataforma[] = [
   { nome: "Historico 50", valor: "{{chat_history_details}}", para: "Últimas 50 mensagens: traz sempre o atendimento que acabou, com o encerramento. Crie o campo como TEXTO LONGO." },
   { nome: "Atendente", valor: "{{assigned_admin_name}}", para: "Atendente atribuído à conversa." },
   { nome: "Atendente ID", valor: "{{assigned_admin_id}}", para: "Identifica o atendente mesmo se o nome mudar." },
-  { nome: "Etiquetas Nomes", valor: "{{user_tags}}", para: "Nomes das etiquetas do contato (ex.: Grow). Usado nas regras de origem." },
+  { nome: "Etiquetas Nomes", valor: "{{user_tags}}", para: "Opcional. O envio já traz o número de cada etiqueta; o nome de cada número é dado no painel em Etiquetas da plataforma (ex.: Grow)." },
   { nome: "Fonte do contato", valor: "{{user_source}}", para: "Como o contato chegou: anúncio, comentário, mensagem recebida, API…" },
   { nome: "Canal da Conversa", valor: "{{user_channel}}", para: "WhatsApp, Instagram, Messenger, Webchat." },
 ];

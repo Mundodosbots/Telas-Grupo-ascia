@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { useAtendentes, useChatbots, useDepartamentos, useEtiquetas, useFiltros, useOrigens, useTimes, PERIODOS } from "../hooks";
+import { useAtendentes, useChatbots, useDepartamentos, useEtiquetas, useEtiquetasPlataforma, useFiltros, useOrigens, useTimes, PERIODOS } from "../hooks";
 import { SITUACOES } from "../lib/glossario";
 import { Campo, cx, Selecao } from "./ui";
 
-type Extra = "atendente" | "time" | "departamento" | "origem" | "etiqueta" | "canal" | "cidade" | "busca" | "humano";
+type Extra = "atendente" | "time" | "departamento" | "origem" | "etiqueta" | "plataforma" | "canal" | "cidade" | "busca" | "humano";
 
 /** Barra de filtros única. Tudo fica na URL (dá para mandar o link com o filtro). */
 export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
@@ -14,6 +14,8 @@ export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
   const departamentos = useDepartamentos();
   const origens = useOrigens();
   const etiquetas = useEtiquetas();
+  const plataforma = useEtiquetasPlataforma();
+  const comNome = (plataforma.data ?? []).filter((e) => e.nome.trim() && (!filtros.chatbot_id || e.chatbotId === filtros.chatbot_id));
   const tem = (e: Extra) => extras.includes(e);
 
   return (
@@ -69,7 +71,7 @@ export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
           <Selecao rotulo="Departamento" value={filtros.departamento_id ?? ""} onChange={(e) => definir({ departamento: e.target.value })} className="w-48">
             <option value="">Todos</option>
             <option value="nenhum">Sem departamento</option>
-            {(departamentos.data ?? []).map((d) => (
+            {(departamentos.data ?? []).filter((d) => d.ativo || d.id === filtros.departamento_id).map((d) => (
               <option key={d.id} value={d.id}>
                 {d.nome}
               </option>
@@ -80,7 +82,7 @@ export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
           <Selecao rotulo="Origem" value={filtros.origem_id ?? ""} onChange={(e) => definir({ origem: e.target.value })} className="w-52">
             <option value="">Todas</option>
             <option value="nenhuma">Sem origem</option>
-            {(origens.data ?? []).map((o) => (
+            {(origens.data ?? []).filter((o) => o.ativo || o.id === filtros.origem_id).map((o) => (
               <option key={o.id} value={o.id}>
                 {o.nome}
               </option>
@@ -90,7 +92,17 @@ export function BarraFiltros({ extras = [] }: { extras?: Extra[] }) {
         {tem("etiqueta") && (
           <Selecao rotulo="Etiqueta" value={filtros.etiqueta_id ?? ""} onChange={(e) => definir({ etiqueta: e.target.value })} className="w-44">
             <option value="">Todas</option>
-            {(etiquetas.data ?? []).map((o) => (
+            {(etiquetas.data ?? []).filter((o) => o.ativo || o.id === filtros.etiqueta_id).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.nome}
+              </option>
+            ))}
+          </Selecao>
+        )}
+        {tem("plataforma") && comNome.length > 0 && (
+          <Selecao rotulo="Etiqueta da plataforma" value={filtros.etiqueta_plataforma ?? ""} onChange={(e) => definir({ plataforma: e.target.value })} className="w-48">
+            <option value="">Todas</option>
+            {comNome.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.nome}
               </option>
