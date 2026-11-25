@@ -10,8 +10,8 @@ import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/reso
 import { db } from "../db/client";
 import { atendentes, atendimentos, chatbots, contatos, departamentos, etiquetasPlataforma, origens, times } from "../db/schema";
 import { env } from "../env";
-import { protegido } from "../lib/auth";
-import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
+import { protegido, type Acesso } from "../lib/auth";
+import { chatbotsPermitidos, condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
 import { agenteAtivo } from "../services/organizador";
 import { calcularPainel } from "./dashboard";
 
@@ -119,10 +119,10 @@ function enxugar(linhas: any[], limite = 15) {
   }));
 }
 
-async function executar(empresaId: string, nome: string, args: any): Promise<unknown> {
-  const filtros = await resolverFiltros(empresaId, args ?? {});
+async function executar(acesso: Acesso, nome: string, args: any): Promise<unknown> {
+  const filtros = await resolverFiltros(acesso.empresaId, args ?? {});
   if (nome === "consultar_metricas") {
-    const p = await calcularPainel(empresaId, filtros);
+    const p = await calcularPainel(acesso, filtros);
     return {
       resumo: enxugar([{ ...p.resumo, rotulo: "Total" }])[0],
       por_chatbot: enxugar(p.porChatbot),
@@ -171,7 +171,7 @@ async function executar(empresaId: string, nome: string, args: any): Promise<unk
       .innerJoin(contatos, eq(contatos.id, atendimentos.contatoId))
       .innerJoin(chatbots, eq(chatbots.id, atendimentos.chatbotId))
       .leftJoin(atendentes, eq(atendentes.id, atendimentos.atendenteId))
-      .where(and(...condicoesAtendimentos(empresaId, filtros), extra))
+      .where(and(...condicoesAtendimentos(acesso, filtros), extra))
       .orderBy(ordem)
       .limit(Math.min(30, Math.max(1, Number(args?.limite) || 10)));
     return linhas.map((l) => ({ ...l, robo_ate_humano_s: undefined, resposta_media_s: undefined, min_robo_ate_humano: min(l.robo_ate_humano_s), min_resposta_media: min(l.resposta_media_s) }));
@@ -218,14 +218,30 @@ export const rotasAssistente = new Elysia({ prefix: "/api/assistente" })
   .use(protegido({ empresa: true }))
   .post(
     "/",
-    async ({ body, empresaId, set }) => {
+    async ({ body, empresaId, acesso, set }) => {
       if (!agenteAtivo()) {
         set.status = 503;
         return { erro: "O assistente precisa da chave da OpenAI configurada." };
       }
       const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: env.TZ_RELATORIOS }).format(new Date());
+      // Gerente com acesso limitado: o assistente só conhece os chatbots dele e os atendentes que aparecem neles
+      const limite = {
+        chatbots: chatbotsPermitidos(chatbots.id, acesso.chatbotIds),
+        atendentes: acesso.chatbotIds
+          ? sql`exists (select 1 from atendimentos a where a.atendente_id = ${atendentes.id} and ${chatbotsPermitidos(sql.raw("a.chatbot_id"), acesso.chatbotIds)})`
+          : undefined,
+      };
       const nomes = async (tab: typeof chatbots | typeof atendentes | typeof departamentos | typeof origens | typeof times) =>
-        (await db.select({ nome: tab.nome }).from(tab).where(eq(tab.empresaId, empresaId)).orderBy(asc(tab.nome)).limit(120)).map((x) => x.nome).join(", ");
+        (
+          await db
+            .select({ nome: tab.nome })
+            .from(tab)
+            .where(and(eq(tab.empresaId, empresaId), tab === chatbots ? limite.chatbots : tab === atendentes ? limite.atendentes : undefined))
+            .orderBy(asc(tab.nome))
+            .limit(120)
+        )
+          .map((x) => x.nome)
+          .join(", ");
       const sistema = `Você é o assistente do painel de atendimento de uma empresa. Responda perguntas do gestor sobre os atendimentos
 usando SOMENTE os dados das funções. Hoje é ${hoje} (fuso ${env.TZ_RELATORIOS}). Sem período informado, use os últimos 30 dias e diga isso.
 Tempos são em minutos úteis (só o horário de atendimento). "Robô até humano" = da transferência do robô até a 1ª resposta humana.
@@ -262,7 +278,7 @@ Origens: ${await nomes(origens)}`;
             try {
               args = JSON.parse(chamada.function.arguments || "{}");
             } catch {}
-            const resultado = await executar(empresaId, chamada.function.name, args).catch((e) => ({ erro: String(e?.message ?? e) }));
+            const resultado = await executar(acesso, chamada.function.name, args).catch((e) => ({ erro: String(e?.message ?? e) }));
             mensagens.push({ role: "tool", tool_call_id: chamada.id, content: JSON.stringify(resultado).slice(0, 60_000) });
           }
           continue;

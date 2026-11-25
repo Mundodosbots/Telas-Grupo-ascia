@@ -19,7 +19,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 import { ehAdmin, useAuth } from "../auth";
-import { useAtualizacaoAutomatica, useStatus } from "../hooks";
+import { useAtualizacaoAutomatica, useChatbots, useStatus } from "../hooks";
 import { Assistente } from "./Assistente";
 import { cx } from "./ui";
 
@@ -102,6 +102,9 @@ export function Layout() {
     </nav>
   );
 
+  // Gerente com acesso limitado: a lista de chatbots já vem só com os dele
+  const chatbots = useChatbots();
+  const limitadoA = usuario?.chatbotIds && empresa ? (chatbots.data ?? []).map((c) => c.nome).join(", ") : "";
   const rodape = (
     <div className="grid gap-2 border-t border-line pt-3">
       <div className="px-3 text-xs">
@@ -109,6 +112,7 @@ export function Layout() {
         <p className="text-muted truncate">
           {superadmin ? "Superadmin" : usuario?.papel === "admin" ? "Administrador" : "Gerente"} · {usuario?.email}
         </p>
+        {limitadoA && <p className="truncate text-muted" title={limitadoA}>Vê só: {limitadoA}</p>}
       </div>
       <button onClick={() => sair()} className="flex items-center gap-2.5 rounded-lg px-3 h-9 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink cursor-pointer">
         <LogOut className="size-4" /> Sair

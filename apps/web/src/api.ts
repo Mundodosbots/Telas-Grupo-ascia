@@ -53,7 +53,8 @@ export function qs(params: Record<string, string | number | undefined | null>): 
 /* ---------------- Tipos das respostas ---------------- */
 
 export type Papel = "superadmin" | "admin" | "gerente";
-export type Usuario = { id: string; nome: string; email: string; papel: Papel; empresaId: string | null };
+/** chatbotIds: chatbots que o gerente pode ver (nulo = todos os da empresa) */
+export type Usuario = { id: string; nome: string; email: string; papel: Papel; empresaId: string | null; chatbotIds: string[] | null };
 export type EmpresaResumo = { id: string; nome: string; ativo: boolean };
 export type Perfil = { usuario: Usuario; empresas: EmpresaResumo[] };
 export type UsuarioLista = Usuario & { ativo: boolean; ultimoLoginEm: string | null; criadoEm: string };

@@ -1,6 +1,7 @@
-import { eq, isNull, sql, type SQL } from "drizzle-orm";
+import { eq, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { atendimentos } from "../db/schema";
 import { env } from "../env";
+import type { Acesso } from "./auth";
 import { ehUuid, normalizarTelefone } from "./util";
 
 export type FiltroAtendimentos = {
@@ -64,9 +65,18 @@ function faixa(coluna: typeof atendimentos.tempoAteHumanoS | typeof atendimentos
 
 const ehData = (v?: string): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
-/** Condições SQL dos filtros — SEMPRE inclui a empresa */
-export function condicoesAtendimentos(empresaId: string, f: FiltroAtendimentos): SQL[] {
-  const c: SQL[] = [eq(atendimentos.empresaId, empresaId)];
+/**
+ * Limite por chatbot do gerente com acesso limitado (`true` para quem vê a empresa toda).
+ * Use em toda consulta de dados que tenha chatbot: coluna do Drizzle ou sql.raw("a.chatbot_id").
+ */
+export function chatbotsPermitidos(coluna: AnyColumn | SQL, chatbotIds: string[] | null): SQL {
+  if (!chatbotIds) return sql`true`;
+  return sql`${coluna} = any(${`{${chatbotIds.filter(ehUuid).join(",")}}`}::uuid[])`;
+}
+
+/** Condições SQL dos filtros — SEMPRE inclui a empresa e os chatbots que o usuário pode ver */
+export function condicoesAtendimentos(acesso: Acesso, f: FiltroAtendimentos): SQL[] {
+  const c: SQL[] = [eq(atendimentos.empresaId, acesso.empresaId), chatbotsPermitidos(atendimentos.chatbotId, acesso.chatbotIds)];
   if (ehUuid(f.chatbot_id)) c.push(eq(atendimentos.chatbotId, f.chatbot_id));
   if (ehUuid(f.atendente_id)) c.push(eq(atendimentos.atendenteId, f.atendente_id));
   if (ehUuid(f.time_id)) c.push(sql`${atendimentos.atendenteId} in (select id from atendentes where time_id = ${f.time_id})`);

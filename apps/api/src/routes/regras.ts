@@ -3,6 +3,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { atendimentos, contatos, mensagens, origens, regrasOrigem } from "../db/schema";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 import { agenteAtivo, acordarOrganizador } from "../services/organizador";
 import { aplicarRegras } from "../services/regras";
 
@@ -63,7 +64,7 @@ export async function reaplicarRegras(empresaId: string) {
 
 export const rotasRegras = new Elysia({ prefix: "/api/regras" })
   .use(protegido({ empresa: true }))
-  .get("/", ({ empresaId }) =>
+  .get("/", ({ empresaId, acesso }) =>
     db
       .select({
         id: regrasOrigem.id,
@@ -75,7 +76,8 @@ export const rotasRegras = new Elysia({ prefix: "/api/regras" })
         origemCor: origens.cor,
         prioridade: regrasOrigem.prioridade,
         ativo: regrasOrigem.ativo,
-        uso: sql<number>`(select count(*)::int from atendimentos a where a.origem_regra_id = "regras_origem"."id")`,
+        uso: sql<number>`(select count(*)::int from atendimentos a where a.origem_regra_id = "regras_origem"."id"
+          and ${chatbotsPermitidos(sql.raw("a.chatbot_id"), acesso.chatbotIds)})`,
       })
       .from(regrasOrigem)
       .innerJoin(origens, eq(origens.id, regrasOrigem.origemId))

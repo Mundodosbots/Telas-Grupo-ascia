@@ -47,7 +47,7 @@ export const rotasAuth = new Elysia({ prefix: "/api/auth" })
       falhas.delete(email);
       await db.update(usuarios).set({ ultimoLoginEm: new Date() }).where(eq(usuarios.id, u.id));
       cookie[COOKIE_SESSAO]!.set({ value: criarTokenSessao(u.id), ...opcoesCookie() });
-      return perfil({ id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId });
+      return perfil({ id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId, chatbotIds: u.papel === "gerente" ? (u.chatbotIds ?? null) : null });
     },
     { body: t.Object({ email: t.String(), senha: t.String() }) },
   )

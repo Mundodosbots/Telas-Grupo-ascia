@@ -3,6 +3,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { atendentes, atendimentoAtendentes, atendimentos, mensagens, times } from "../db/schema";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 import { ehUuid } from "../lib/util";
 import { nomeDeAtendente } from "../services/ingestao";
 
@@ -11,8 +12,10 @@ const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
 /** Atendentes humanos (criados sozinhos quando aparecem nos envios) */
 export const rotasAtendentes = new Elysia({ prefix: "/api/atendentes" })
   .use(protegido({ empresa: true }))
-  .get("/", ({ empresaId }) =>
-    db
+  .get("/", ({ empresaId, acesso }) => {
+    // Gerente com acesso limitado: só os atendentes e os números dos chatbots dele
+    const doChatbot = chatbotsPermitidos(sql.raw("a.chatbot_id"), acesso.chatbotIds);
+    return db
       .select({
         id: atendentes.id,
         nome: atendentes.nome,
@@ -23,14 +26,22 @@ export const rotasAtendentes = new Elysia({ prefix: "/api/atendentes" })
         timeId: atendentes.timeId,
         timeNome: times.nome,
         timeCor: times.cor,
-        atendimentos: sql<number>`(select count(*)::int from atendimentos a where a.atendente_id = "atendentes"."id")`,
-        ultimoAtendimento: sql<string | null>`(select max(a.ultima_msg_em) from atendimentos a where a.atendente_id = "atendentes"."id")`,
+        atendimentos: sql<number>`(select count(*)::int from atendimentos a where a.atendente_id = "atendentes"."id" and ${doChatbot})`,
+        ultimoAtendimento: sql<string | null>`(select max(a.ultima_msg_em) from atendimentos a where a.atendente_id = "atendentes"."id" and ${doChatbot})`,
       })
       .from(atendentes)
       .leftJoin(times, eq(times.id, atendentes.timeId))
-      .where(eq(atendentes.empresaId, empresaId))
-      .orderBy(asc(atendentes.nome)),
-  )
+      .where(
+        and(
+          eq(atendentes.empresaId, empresaId),
+          acesso.chatbotIds
+            ? sql`exists (select 1 from atendimentos a where ${doChatbot} and (a.atendente_id = "atendentes"."id"
+                or a.id in (select x.atendimento_id from atendimento_atendentes x where x.atendente_id = "atendentes"."id")))`
+            : undefined,
+        ),
+      )
+      .orderBy(asc(atendentes.nome));
+  })
   .use(protegido({ papel: "admin", empresa: true }))
   .patch(
     "/:id",

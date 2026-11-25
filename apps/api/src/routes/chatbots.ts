@@ -4,6 +4,7 @@ import { db } from "../db/client";
 import { chatbots } from "../db/schema";
 import { env } from "../env";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 import { gerarTokenWebhook, sha256 } from "../lib/util";
 import { HORARIO_PADRAO } from "../services/historico";
 
@@ -32,7 +33,7 @@ const fusoValido = (f: string) => {
 /** Chatbots (contas da plataforma) da empresa — cada um tem seu link de webhook */
 export const rotasChatbots = new Elysia({ prefix: "/api/chatbots" })
   .use(protegido({ empresa: true }))
-  .get("/", ({ empresaId }) =>
+  .get("/", ({ empresaId, acesso }) =>
     db
       .select({
         ...campos,
@@ -44,7 +45,7 @@ export const rotasChatbots = new Elysia({ prefix: "/api/chatbots" })
         atendimentos: sql<number>`(select count(*)::int from atendimentos a where a.chatbot_id = "chatbots"."id")`,
       })
       .from(chatbots)
-      .where(eq(chatbots.empresaId, empresaId))
+      .where(and(eq(chatbots.empresaId, empresaId), chatbotsPermitidos(chatbots.id, acesso.chatbotIds)))
       .orderBy(asc(chatbots.nome)),
   )
   .use(protegido({ papel: "admin", empresa: true }))

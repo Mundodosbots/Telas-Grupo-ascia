@@ -100,11 +100,11 @@ function consultaLista(onde: ReturnType<typeof and>) {
 
 export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   .use(protegido({ empresa: true }))
-  .get("/", async ({ query, empresaId }) => {
+  .get("/", async ({ query, acesso }) => {
     const f = query as FiltroAtendimentos & { pagina?: string; por_pagina?: string; ordem?: string };
     const porPagina = Math.min(100, Math.max(1, Number(f.por_pagina) || 25));
     const pagina = Math.max(1, Number(f.pagina) || 1);
-    const onde = and(...condicoesAtendimentos(empresaId, f));
+    const onde = and(...condicoesAtendimentos(acesso, f));
     const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(onde)) as [{ total: number }];
     const itens = await consultaLista(onde)
       .orderBy(...ordemDe(f.ordem))
@@ -114,8 +114,8 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
     return { total, pagina, porPagina, itens: itens.map((i) => ({ ...i, etiquetas: tags.get(i.id) ?? [], plataforma: plataforma.get(i.id) ?? [] })) };
   })
   /** Lista completa (sem paginação) para relatórios e planilha */
-  .get("/relatorio", async ({ query, empresaId }) => {
-    const onde = and(...condicoesAtendimentos(empresaId, query as FiltroAtendimentos));
+  .get("/relatorio", async ({ query, acesso }) => {
+    const onde = and(...condicoesAtendimentos(acesso, query as FiltroAtendimentos));
     const [{ total }] = (await db.select({ total: sql<number>`count(*)::int` }).from(atendimentos).where(onde)) as [{ total: number }];
     const itens = await consultaLista(onde).orderBy(...ordemDe((query as { ordem?: string }).ordem)).limit(LIMITE_RELATORIO);
     const [tags, plataforma] = await Promise.all([etiquetasDe(itens.map((i) => i.id)), etiquetasPlataformaDe(itens)]);
@@ -127,7 +127,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   })
   .get(
     "/:id",
-    async ({ params, empresaId, set }) => {
+    async ({ params, acesso, set }) => {
       const quemClassificou = alias(usuarios, "quem_classificou");
       const [a] = await db
         .select({
@@ -151,7 +151,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         .leftJoin(origens, eq(origens.id, atendimentos.origemId))
         .leftJoin(departamentos, eq(departamentos.id, atendimentos.departamentoId))
         .leftJoin(quemClassificou, eq(quemClassificou.id, atendimentos.classificadoPorUsuarioId))
-        .where(and(eq(atendimentos.id, params.id), eq(atendimentos.empresaId, empresaId)));
+        .where(and(eq(atendimentos.id, params.id), ...condicoesAtendimentos(acesso, {})));
       if (!a) {
         set.status = 404;
         return { erro: "Atendimento não encontrado" };
@@ -173,7 +173,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         .from(atendimentos)
         .leftJoin(origens, eq(origens.id, atendimentos.origemId))
         .leftJoin(atendentes, eq(atendentes.id, atendimentos.atendenteId))
-        .where(and(eq(atendimentos.contatoId, a.at.contatoId), sql`${atendimentos.id} <> ${params.id}`))
+        .where(and(eq(atendimentos.contatoId, a.at.contatoId), sql`${atendimentos.id} <> ${params.id}`, ...condicoesAtendimentos(acesso, {})))
         .orderBy(desc(atendimentos.inicioEm))
         .limit(20);
       const [tags, plataforma] = await Promise.all([etiquetasDe([params.id]), etiquetasPlataformaDe([a.at])]);
@@ -202,12 +202,12 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   /** Linha do tempo do cliente: todos os atendimentos do mesmo contato, com as mensagens */
   .get(
     "/:id/historico-cliente",
-    async ({ params, empresaId, set }) => {
+    async ({ params, acesso, set }) => {
       const [a] = await db
         .select({ contatoId: atendimentos.contatoId, horario: chatbots.horario, fuso: chatbots.fuso })
         .from(atendimentos)
         .innerJoin(chatbots, eq(chatbots.id, atendimentos.chatbotId))
-        .where(and(eq(atendimentos.id, params.id), eq(atendimentos.empresaId, empresaId)));
+        .where(and(eq(atendimentos.id, params.id), ...condicoesAtendimentos(acesso, {})));
       if (!a) {
         set.status = 404;
         return { erro: "Atendimento não encontrado" };
@@ -232,7 +232,7 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
         .from(atendimentos)
         .leftJoin(atendentes, eq(atendentes.id, atendimentos.atendenteId))
         .leftJoin(origens, eq(origens.id, atendimentos.origemId))
-        .where(eq(atendimentos.contatoId, a.contatoId))
+        .where(and(eq(atendimentos.contatoId, a.contatoId), ...condicoesAtendimentos(acesso, {})))
         .orderBy(asc(atendimentos.inicioEm));
       const msgs = await db
         .select({ id: mensagens.id, atendimentoId: mensagens.atendimentoId, em: mensagens.enviadaEm, tipo: mensagens.remetenteTipo, remetente: mensagens.remetenteNome, texto: mensagens.texto })
@@ -252,8 +252,8 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   /** Correção manual: o agente não mexe mais neste atendimento */
   .patch(
     "/:id",
-    async ({ params, body, usuario, empresaId, set }) => {
-      const [a] = await db.select({ id: atendimentos.id }).from(atendimentos).where(and(eq(atendimentos.id, params.id), eq(atendimentos.empresaId, empresaId)));
+    async ({ params, body, usuario, acesso, set }) => {
+      const [a] = await db.select({ id: atendimentos.id }).from(atendimentos).where(and(eq(atendimentos.id, params.id), ...condicoesAtendimentos(acesso, {})));
       if (!a) {
         set.status = 404;
         return { erro: "Atendimento não encontrado" };
@@ -291,8 +291,8 @@ export const rotasAtendimentos = new Elysia({ prefix: "/api/atendimentos" })
   /** Devolve para o agente organizar de novo */
   .post(
     "/:id/reorganizar",
-    async ({ params, empresaId, set }) => {
-      const [a] = await db.select({ id: atendimentos.id }).from(atendimentos).where(and(eq(atendimentos.id, params.id), eq(atendimentos.empresaId, empresaId)));
+    async ({ params, acesso, set }) => {
+      const [a] = await db.select({ id: atendimentos.id }).from(atendimentos).where(and(eq(atendimentos.id, params.id), ...condicoesAtendimentos(acesso, {})));
       if (!a) {
         set.status = 404;
         return { erro: "Atendimento não encontrado" };

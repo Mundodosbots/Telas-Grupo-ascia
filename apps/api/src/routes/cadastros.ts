@@ -3,6 +3,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { departamentos, etiquetas, origens, times } from "../db/schema";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 
 const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
 const corpo = {
@@ -13,10 +14,10 @@ const corpo = {
 };
 
 /** Origens, departamentos e etiquetas: cada empresa tem os seus; o agente escolhe entre os ativos */
-function rotasCadastro(prefixo: string, tabela: typeof origens | typeof departamentos | typeof etiquetas, uso: (id: unknown) => ReturnType<typeof sql>) {
+function rotasCadastro(prefixo: string, tabela: typeof origens | typeof departamentos | typeof etiquetas, uso: (id: unknown, doChatbot: ReturnType<typeof sql>) => ReturnType<typeof sql>) {
   return new Elysia({ prefix: `/api/${prefixo}` })
     .use(protegido({ empresa: true }))
-    .get("/", ({ empresaId }) =>
+    .get("/", ({ empresaId, acesso }) =>
       db
         .select({
           id: tabela.id,
@@ -25,7 +26,7 @@ function rotasCadastro(prefixo: string, tabela: typeof origens | typeof departam
           cor: tabela.cor,
           ativo: tabela.ativo,
           // coluna qualificada: sem o nome da tabela, o "id" da subconsulta apontaria para a tabela errada
-          uso: uso(sql.raw(`"${prefixo}"."id"`)) as unknown as ReturnType<typeof sql<number>>,
+          uso: uso(sql.raw(`"${prefixo}"."id"`), chatbotsPermitidos(sql.raw("a.chatbot_id"), acesso.chatbotIds)) as unknown as ReturnType<typeof sql<number>>,
         })
         .from(tabela)
         .where(eq(tabela.empresaId, empresaId))
@@ -67,16 +68,17 @@ function rotasCadastro(prefixo: string, tabela: typeof origens | typeof departam
     );
 }
 
-export const rotasOrigens = rotasCadastro("origens", origens, (id) => sql<number>`(select count(*)::int from atendimentos a where a.origem_id = ${id})`);
+export const rotasOrigens = rotasCadastro("origens", origens, (id, doChatbot) => sql<number>`(select count(*)::int from atendimentos a where a.origem_id = ${id} and ${doChatbot})`);
 export const rotasDepartamentos = rotasCadastro(
   "departamentos",
   departamentos,
-  (id) => sql<number>`(select count(*)::int from atendimentos a where a.departamento_id = ${id})`,
+  (id, doChatbot) => sql<number>`(select count(*)::int from atendimentos a where a.departamento_id = ${id} and ${doChatbot})`,
 );
 export const rotasEtiquetas = rotasCadastro(
   "etiquetas",
   etiquetas,
-  (id) => sql<number>`(select count(*)::int from atendimento_etiquetas ae where ae.etiqueta_id = ${id})`,
+  (id, doChatbot) =>
+    sql<number>`(select count(*)::int from atendimento_etiquetas ae join atendimentos a on a.id = ae.atendimento_id where ae.etiqueta_id = ${id} and ${doChatbot})`,
 );
 
 /** Times de atendentes (ex.: Vendas Sinop, Seminovos, CRM) */

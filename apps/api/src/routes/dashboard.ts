@@ -4,7 +4,8 @@ import { db } from "../db/client";
 import { atendimentos, webhookEventos } from "../db/schema";
 import { env } from "../env";
 import { protegido } from "../lib/auth";
-import { condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
+import type { Acesso } from "../lib/auth";
+import { chatbotsPermitidos, condicoesAtendimentos, type FiltroAtendimentos } from "../lib/filtros";
 import { agenteAtivo } from "../services/organizador";
 
 /** Mesmas métricas para o total e para cada agrupamento */
@@ -42,9 +43,9 @@ async function agrupar(onde: SQL, chave: string, rotulo: string, extras = "", ju
 }
 
 /** Todas as métricas do painel para um filtro (usado pela tela e pelo assistente de IA) */
-export async function calcularPainel(empresaId: string, query: FiltroAtendimentos) {
+export async function calcularPainel(acesso: Acesso, query: FiltroAtendimentos) {
     // As condições usam a tabela "atendimentos"; nas consultas abaixo ela tem o apelido "a"
-    const onde = sql`a.id in (select id from atendimentos where ${and(...condicoesAtendimentos(empresaId, query))})`;
+    const onde = sql`a.id in (select id from atendimentos where ${and(...condicoesAtendimentos(acesso, query))})`;
     const tz = env.TZ_RELATORIOS.replace(/'/g, "");
 
     const [resumo] = [...(await db.execute(sql`select ${METRICAS} from atendimentos a where ${onde}`))].map(camel);
@@ -136,9 +137,9 @@ export async function calcularPainel(empresaId: string, query: FiltroAtendimento
 
 export const rotasDashboard = new Elysia({ prefix: "/api" })
   .use(protegido({ empresa: true }))
-  .get("/painel", ({ query, empresaId }) => calcularPainel(empresaId, query as FiltroAtendimentos))
+  .get("/painel", ({ query, acesso }) => calcularPainel(acesso, query as FiltroAtendimentos))
   /** Situação geral (avisos no topo e atualização automática das telas) */
-  .get("/status", async ({ empresaId }) => {
+  .get("/status", async ({ empresaId, acesso }) => {
     const [fila] = (await db
       .select({
         pendentes: sql<number>`count(*) filter (where ${atendimentos.classificacaoStatus} in ('pendente','processando'))::int`,
@@ -146,11 +147,11 @@ export const rotasDashboard = new Elysia({ prefix: "/api" })
         ultimaAlteracao: sql<string | null>`max(${atendimentos.atualizadoEm})::text`,
       })
       .from(atendimentos)
-      .where(eq(atendimentos.empresaId, empresaId))) as [{ pendentes: number; erros: number; ultimaAlteracao: string | null }];
+      .where(and(eq(atendimentos.empresaId, empresaId), chatbotsPermitidos(atendimentos.chatbotId, acesso.chatbotIds)))) as [{ pendentes: number; erros: number; ultimaAlteracao: string | null }];
     const [ultimoEvento] = await db
       .select({ recebidoEm: webhookEventos.recebidoEm, status: webhookEventos.status })
       .from(webhookEventos)
-      .where(eq(webhookEventos.empresaId, empresaId))
+      .where(and(eq(webhookEventos.empresaId, empresaId), chatbotsPermitidos(webhookEventos.chatbotId, acesso.chatbotIds)))
       .orderBy(desc(webhookEventos.recebidoEm))
       .limit(1);
     return { agenteAtivo: agenteAtivo(), modelo: agenteAtivo() ? env.OPENAI_MODEL : null, fusoHorario: env.TZ_RELATORIOS, ...fila, ultimoEvento: ultimoEvento ?? null };

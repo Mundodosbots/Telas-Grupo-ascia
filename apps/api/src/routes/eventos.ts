@@ -3,6 +3,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { chatbots, contatos, webhookEventos } from "../db/schema";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 import { ehUuid } from "../lib/util";
 
 const STATUS = new Set(["processado", "rejeitado", "capturado"]);
@@ -10,11 +11,12 @@ const STATUS = new Set(["processado", "rejeitado", "capturado"]);
 /** Registro bruto de tudo que chegou pelo webhook — para conferir a integração */
 export const rotasEventos = new Elysia({ prefix: "/api/eventos" })
   .use(protegido({ empresa: true }))
-  .get("/", async ({ query, empresaId }) => {
+  .get("/", async ({ query, empresaId, acesso }) => {
     const porPagina = Math.min(100, Math.max(1, Number(query.por_pagina) || 30));
     const pagina = Math.max(1, Number(query.pagina) || 1);
     const onde = and(
       eq(webhookEventos.empresaId, empresaId),
+      chatbotsPermitidos(webhookEventos.chatbotId, acesso.chatbotIds),
       ehUuid(query.chatbot_id) ? eq(webhookEventos.chatbotId, query.chatbot_id) : undefined,
       query.status && STATUS.has(query.status) ? eq(webhookEventos.status, query.status as "processado" | "rejeitado" | "capturado") : undefined,
     );
@@ -44,11 +46,11 @@ export const rotasEventos = new Elysia({ prefix: "/api/eventos" })
   /** JSON completo de um envio (pode ser grande: só carrega quando pedem) */
   .get(
     "/:id",
-    async ({ params, empresaId, set }) => {
+    async ({ params, empresaId, acesso, set }) => {
       const [e] = await db
         .select({ payload: webhookEventos.payload })
         .from(webhookEventos)
-        .where(and(eq(webhookEventos.id, params.id), eq(webhookEventos.empresaId, empresaId)));
+        .where(and(eq(webhookEventos.id, params.id), eq(webhookEventos.empresaId, empresaId), chatbotsPermitidos(webhookEventos.chatbotId, acesso.chatbotIds)));
       if (!e) {
         set.status = 404;
         return { erro: "Evento não encontrado" };

@@ -1,7 +1,7 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db/client";
-import { usuarios } from "../db/schema";
+import { chatbots, usuarios } from "../db/schema";
 import { protegido } from "../lib/auth";
 
 const campos = {
@@ -9,11 +9,28 @@ const campos = {
   nome: usuarios.nome,
   email: usuarios.email,
   papel: usuarios.papel,
+  chatbotIds: usuarios.chatbotIds,
   empresaId: usuarios.empresaId,
   ativo: usuarios.ativo,
   ultimoLoginEm: usuarios.ultimoLoginEm,
   criadoEm: usuarios.criadoEm,
 };
+
+/**
+ * Chatbots que o gerente pode ver: nulo = todos os da empresa. Só aceita chatbots da própria empresa
+ * (lista vazia é recusada: um gerente sem nenhum chatbot não veria nada).
+ */
+async function validarChatbots(empresaId: string, ids: string[] | null | undefined): Promise<string[] | null | { erro: string }> {
+  if (ids === null || ids === undefined) return null;
+  const unicos = [...new Set(ids)];
+  if (!unicos.length) return { erro: "Escolha pelo menos um chatbot, ou marque que o usuário vê todos" };
+  const achados = await db
+    .select({ id: chatbots.id })
+    .from(chatbots)
+    .where(and(eq(chatbots.empresaId, empresaId), inArray(chatbots.id, unicos)));
+  if (achados.length !== unicos.length) return { erro: "Chatbot não encontrado nesta empresa" };
+  return unicos;
+}
 
 /**
  * Usuários da empresa (administradores e gerentes).
@@ -47,6 +64,12 @@ export const rotasUsuarios = new Elysia({ prefix: "/api/usuarios" })
         set.status = 400;
         return { erro: "Escolha uma empresa", codigo: "SEM_EMPRESA" };
       }
+      // Só o gerente pode ter acesso limitado; administrador vê a empresa toda
+      const ids = body.papel === "gerente" ? await validarChatbots(empresaId, body.chatbot_ids) : null;
+      if (ids && !Array.isArray(ids)) {
+        set.status = 400;
+        return ids;
+      }
       const email = body.email.toLowerCase().trim();
       const [existe] = await db.select({ id: usuarios.id }).from(usuarios).where(eq(usuarios.email, email));
       if (existe) {
@@ -60,6 +83,7 @@ export const rotasUsuarios = new Elysia({ prefix: "/api/usuarios" })
           email,
           senhaHash: await Bun.password.hash(body.senha),
           papel: body.papel,
+          chatbotIds: ids,
           empresaId: superadmin ? null : empresaId,
         })
         .returning(campos);
@@ -72,6 +96,8 @@ export const rotasUsuarios = new Elysia({ prefix: "/api/usuarios" })
         email: t.String({ format: "email" }),
         senha: t.String({ minLength: 8 }),
         papel: t.Union([t.Literal("admin"), t.Literal("gerente"), t.Literal("superadmin")]),
+        /** Nulo ou ausente = vê todos os chatbots da empresa */
+        chatbot_ids: t.Optional(t.Nullable(t.Array(t.String({ format: "uuid" }), { maxItems: 200 }))),
       }),
     },
   )
@@ -98,6 +124,16 @@ export const rotasUsuarios = new Elysia({ prefix: "/api/usuarios" })
       if (body.ativo !== undefined) dados.ativo = body.ativo;
       if (body.papel !== undefined && alvo.papel !== "superadmin") dados.papel = body.papel;
       if (body.senha) dados.senhaHash = await Bun.password.hash(body.senha);
+      const papelFinal = dados.papel ?? alvo.papel;
+      if (papelFinal !== "gerente") dados.chatbotIds = null;
+      else if (body.chatbot_ids !== undefined && alvo.empresaId) {
+        const ids = await validarChatbots(alvo.empresaId, body.chatbot_ids);
+        if (ids && !Array.isArray(ids)) {
+          set.status = 400;
+          return ids;
+        }
+        dados.chatbotIds = ids;
+      }
       const [u] = await db.update(usuarios).set(dados).where(and(eq(usuarios.id, params.id))).returning(campos);
       return u;
     },
@@ -108,6 +144,7 @@ export const rotasUsuarios = new Elysia({ prefix: "/api/usuarios" })
         papel: t.Optional(t.Union([t.Literal("admin"), t.Literal("gerente")])),
         ativo: t.Optional(t.Boolean()),
         senha: t.Optional(t.String({ minLength: 8 })),
+        chatbot_ids: t.Optional(t.Nullable(t.Array(t.String({ format: "uuid" }), { maxItems: 200 }))),
       }),
     },
   );

@@ -59,6 +59,8 @@ export const usuarios = pgTable(
     email: text("email").notNull().unique(),
     senhaHash: text("senha_hash").notNull(),
     papel: papelUsuario("papel").notNull().default("gerente"),
+    /** Gerente com acesso limitado: só vê estes chatbots. Nulo = todos os chatbots da empresa */
+    chatbotIds: uuid("chatbot_ids").array(),
     ativo: boolean("ativo").notNull().default(true),
     ultimoLoginEm: quando("ultimo_login_em"),
     criadoEm: criadoEm(),

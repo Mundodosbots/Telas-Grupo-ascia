@@ -15,7 +15,12 @@ export type UsuarioSessao = {
   papel: Papel;
   /** nulo para superadmin */
   empresaId: string | null;
+  /** Chatbots que o usuário pode ver. Nulo = todos os da empresa (admin e superadmin sempre nulo) */
+  chatbotIds: string[] | null;
 };
+
+/** O que uma rota de dados pode mostrar: a empresa e, para gerente limitado, só alguns chatbots */
+export type Acesso = { empresaId: string; chatbotIds: string[] | null };
 
 export const COOKIE_SESSAO = "sessao";
 export const DURACAO_SESSAO_S = 60 * 60 * 24 * 7;
@@ -64,7 +69,7 @@ export async function usuarioDoCookie(token: unknown): Promise<UsuarioSessao | n
     const [e] = await db.select({ id: empresas.id }).from(empresas).where(and(eq(empresas.id, u.empresaId), eq(empresas.ativo, true)));
     if (!e) return null;
   }
-  return { id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId };
+  return { id: u.id, nome: u.nome, email: u.email, papel: u.papel, empresaId: u.empresaId, chatbotIds: u.papel === "gerente" ? (u.chatbotIds ?? null) : null };
 }
 
 const NIVEL: Record<Papel, number> = { gerente: 1, admin: 2, superadmin: 3 };
@@ -73,6 +78,7 @@ const NIVEL: Record<Papel, number> = { gerente: 1, admin: 2, superadmin: 3 };
  * Protege as rotas registradas DEPOIS dele no mesmo módulo.
  *   protegido()                         → qualquer usuário logado, sem empresa (ex.: /auth/eu)
  *   protegido({ empresa: true })        → rotas de dados: injeta `empresaId` (a do usuário, ou a escolhida pelo superadmin)
+ *                                         e `acesso` (empresa + chatbots que o usuário pode ver)
  *   protegido({ papel: "admin", ... })  → exige administrador da empresa (ou superadmin)
  *   protegido({ papel: "superadmin" })  → só superadmin
  */
@@ -85,7 +91,8 @@ export function protegido(opcoes: { papel?: Papel; empresa?: boolean } = {}) {
         const escolhida = headers[CABECALHO_EMPRESA];
         empresaId = ehUuid(escolhida) ? escolhida : null;
       }
-      return { usuario, empresaId: empresaId as string };
+      const acesso: Acesso = { empresaId: empresaId as string, chatbotIds: usuario?.chatbotIds ?? null };
+      return { usuario, empresaId: empresaId as string, acesso };
     })
     .onBeforeHandle({ as: "scoped" }, ({ usuario, empresaId, set }) => {
       if (!usuario) {

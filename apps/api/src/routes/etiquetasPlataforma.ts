@@ -3,6 +3,7 @@ import { Elysia, t } from "elysia";
 import { db } from "../db/client";
 import { chatbots, etiquetasPlataforma } from "../db/schema";
 import { protegido } from "../lib/auth";
+import { chatbotsPermitidos } from "../lib/filtros";
 
 export type EtiquetaPlataforma = { id: string; idExterno: string; nome: string; cor: string; destaque: boolean };
 
@@ -44,7 +45,7 @@ const paramsId = t.Object({ id: t.String({ format: "uuid" }) });
  */
 export const rotasEtiquetasPlataforma = new Elysia({ prefix: "/api/etiquetas-plataforma" })
   .use(protegido({ empresa: true }))
-  .get("/", async ({ empresaId }) => {
+  .get("/", async ({ empresaId, acesso }) => {
     const itens = await db
       .select({
         id: etiquetasPlataforma.id,
@@ -66,7 +67,7 @@ export const rotasEtiquetasPlataforma = new Elysia({ prefix: "/api/etiquetas-pla
       })
       .from(etiquetasPlataforma)
       .innerJoin(chatbots, eq(chatbots.id, etiquetasPlataforma.chatbotId))
-      .where(eq(etiquetasPlataforma.empresaId, empresaId))
+      .where(and(eq(etiquetasPlataforma.empresaId, empresaId), chatbotsPermitidos(etiquetasPlataforma.chatbotId, acesso.chatbotIds)))
       .orderBy(asc(chatbots.nome), asc(etiquetasPlataforma.nome), asc(etiquetasPlataforma.idExterno));
     // Em destaque primeiro, depois as que aparecem em mais atendimentos (as importadas e nunca vistas vão para o fim)
     return itens.sort(
